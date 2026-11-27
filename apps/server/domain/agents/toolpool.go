@@ -147,6 +147,14 @@ type projectToolCache struct {
 	toolNames []string
 	// builtinTools tracks which tools came from builtin MCP service (not external servers)
 	builtinTools map[string]bool
+	// externalTools is the registration-time provenance of third-party tools:
+	// every name added by an external MCP server or a relay instance. It is
+	// written where the tool is registered rather than derived by subtracting
+	// builtinTools, because all three sources write one namespace: an external
+	// server whose <slug>_<tool> collides with an enabled builtin's name leaves
+	// builtinTools[name] true while the pooled definition is the server's, so a
+	// subtraction would report the third-party tool as ours (#1144 review).
+	externalTools map[string]bool
 	// relayToolInstance maps prefixed tool name → instance ID for relay tool routing
 	relayToolInstance map[string]string
 	// bareNameToKeys maps a bare tool name → every prefixed pool key exposing it.
@@ -202,6 +210,7 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 	cache := &projectToolCache{
 		toolDefs:          make(map[string]mcp.ToolDefinition),
 		builtinTools:      make(map[string]bool),
+		externalTools:     make(map[string]bool),
 		relayToolInstance: make(map[string]string),
 		bareNameToKeys:    make(map[string][]string),
 	}
@@ -285,6 +294,9 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 				}
 				cache.toolDefs[prefixedName] = td
 				cache.toolNames = append(cache.toolNames, prefixedName)
+				// Provenance is recorded here, at registration, so a pooled name
+				// that collides with a builtin's cannot be mistaken for ours.
+				cache.externalTools[prefixedName] = true
 				// Index the bare tool name → prefixed key so whitelist entries
 				// persisted by the admin API (bare ToolName, no server prefix)
 				// can be resolved back to the pooled ServerName_ToolName key.
@@ -326,6 +338,7 @@ func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
 					OutputSchema: rt.OutputSchema,
 				}
 				cache.toolNames = append(cache.toolNames, fullName)
+				cache.externalTools[fullName] = true
 				cache.relayToolInstance[fullName] = sess.InstanceID
 			}
 		}
@@ -1058,31 +1071,30 @@ func (tp *ToolPool) ToolNames(projectID string) []string {
 	return names
 }
 
-// ExternalToolNames returns the names in the project's pool that did not come
-// from the builtin catalog: external MCP servers (pooled as
+// ExternalToolNames returns the names this project's pool registered from
+// outside the builtin catalog: external MCP servers (pooled as
 // <slugified server>_<tool>) and MCP relay instances. Their results are
 // third-party content.
 //
-// Callers use this as fencing provenance (issue #1142, review of #1144). It is a
-// set of registered names rather than a lookup by name shape because the pooled
-// names share one namespace with the builtin catalog and the agent-runtime
-// tools — an external server named "work" exposing "complete" produces
-// "work_complete", the name of a trusted runtime tool. Provenance cannot be
-// spoofed by a server picking its tool names; a name comparison can.
+// Callers use this as fencing provenance (issue #1142, review of #1144). It is
+// the set recorded at registration rather than a subtraction over the pooled
+// names, because the pooled names share one namespace with the builtin catalog
+// and the agent-runtime tools — an external server named "work" exposing
+// "complete" produces "work_complete", the name of a trusted runtime tool.
+// Provenance cannot be spoofed by a server picking its tool names; a name
+// comparison can, and so can a subtraction, which reads an external tool whose
+// name collides with an enabled builtin as ours.
 //
 // Returns nil when the project has no external tools, which leaves the fence's
 // predicate on the catalog and therefore failing closed for anything it does not
 // list.
 func (tp *ToolPool) ExternalToolNames(projectID string) map[string]bool {
 	cache := tp.getOrBuildCache(projectID)
-	var names map[string]bool
-	for _, name := range cache.toolNames {
-		if cache.builtinTools[name] {
-			continue
-		}
-		if names == nil {
-			names = make(map[string]bool)
-		}
+	if len(cache.externalTools) == 0 {
+		return nil
+	}
+	names := make(map[string]bool, len(cache.externalTools))
+	for name := range cache.externalTools {
 		names[name] = true
 	}
 	return names
