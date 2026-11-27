@@ -709,16 +709,16 @@ func TestMergeBranchResolvesNotificationsOnlyOnFullMerge(t *testing.T) {
 	})
 }
 
-// TestMergeBranchExactKeyNoSimLeftForReview pins the exact-key reclassification
+// TestMergeBranchExactKeyNoSimResolvesConflict pins the exact-key same-entity
 // contract for presets whose SimilarityAction is empty ("manual",
 // "enrich_no_sim", "mine_no_sim"): a source object that shares a normalized
-// type+key with a target HEAD is reclassified "similar", and — because the empty
-// action means "no auto-action" — it must be LEFT FOR REVIEW, not silently
-// skipped. Before the fix, the applyMerge path skipped it while the dry-run
-// precompute did not count it, so leftForReview stayed 0 and the branch was
-// wrongly stamped merged (merged_at) and its review-ready notification resolved
-// even though nothing was actually merged.
-func TestMergeBranchExactKeyNoSimLeftForReview(t *testing.T) {
+// type+key with a target HEAD is classified by content, not "similar" — a
+// genuine property conflict resolves through CanonicalConflictAction (here
+// "enrich"), never through the empty similarity action ("no auto-action").
+// Before the fix, the exact-key path reclassified the object "similar" and, with
+// an empty similarity action, left it for review, so the duplicate canonical was
+// never collapsed into the target.
+func TestMergeBranchExactKeyNoSimResolvesConflict(t *testing.T) {
 	if testing.Short() {
 		testdb.SkipOrFatal(t, "integration test requires database")
 	}
@@ -759,7 +759,7 @@ func TestMergeBranchExactKeyNoSimLeftForReview(t *testing.T) {
 	require.NoError(t, err)
 
 	// Source branch extracts the SAME entity (same type+key) as a fresh object —
-	// a distinct canonical ID that the merge would otherwise treat as "added".
+	// a distinct canonical ID whose "name" conflicts with main's.
 	sourceBranch := &graph.Branch{ID: uuid.New(), ProjectID: pid, Name: "exact-key-src"}
 	require.NoError(t, repo.CreateBranch(ctx, sourceBranch))
 	_, err = svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
@@ -770,8 +770,9 @@ func TestMergeBranchExactKeyNoSimLeftForReview(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 
-	// enrich_no_sim → SimilarityAction == "", SimilarityEnabled == false. The
-	// exact-key path still fires; the empty action must leave it for review.
+	// enrich_no_sim → SimilarityAction == "", SimilarityEnabled == false, but
+	// CanonicalConflictAction == "enrich". The exact-key match must resolve as a
+	// canonical conflict (enriched), not "similar" (left for review).
 	resp, err := svc.MergeBranch(ctx, pid, nil, &graph.BranchMergeRequest{
 		SourceBranchID: sourceBranch.ID,
 		Execute:        true,
@@ -779,21 +780,115 @@ func TestMergeBranchExactKeyNoSimLeftForReview(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.Equal(t, 1, resp.LeftForReviewCount,
-		"exact-key match under empty SimilarityAction must be left for review, not silently skipped")
+	require.Zero(t, resp.SimilarCount, "exact-key match must never be classified 'similar'")
+	require.Zero(t, resp.LeftForReviewCount,
+		"exact-key match must resolve through CanonicalConflictAction, not be left for review")
 
-	// The reclassified object must be flagged "similar" + "suggested" in the
-	// summary, matching what applyMerge does (skip, no absorb, no add).
-	var foundSuggested bool
+	// The reclassified object must be flagged "conflict" + "enriched" in the
+	// summary, matching applyMerge (target wins conflicts, source adds new keys).
+	var foundConflict bool
 	for _, o := range resp.Objects {
-		if o.Status == "similar" && o.Resolution == "suggested" {
-			foundSuggested = true
+		if o.Status == "conflict" && o.Resolution == "enriched" {
+			foundConflict = true
 		}
 	}
-	require.True(t, foundSuggested, "reclassified object must carry status=similar, resolution=suggested")
+	require.True(t, foundConflict, "reclassified object must carry status=conflict, resolution=enriched")
 
-	// Nothing was merged → the branch must NOT be closed and its notification
-	// must NOT be resolved.
-	require.Empty(t, resolver.calls, "left-for-review merge must not resolve the branch notifications")
-	require.Nil(t, mergedAtOf(sourceBranch.ID), "left-for-review merge must not stamp merged_at")
+	// The merge fully resolved → the branch is closed and its notification
+	// resolved.
+	require.NotEmpty(t, resolver.calls, "a full merge must resolve the branch notifications")
+	require.NotNil(t, mergedAtOf(sourceBranch.ID), "a full merge must stamp merged_at")
+}
+
+// TestMergeBranchSameEntityReExtractionCollapsesCanonical reproduces the #1186
+// re-extraction backfill: CreateOrUpdate on a staging branch mints a NEW
+// canonical for an entity that already exists on main (the branch-scoped
+// upsert lookup misses it). The merge must recognize the exact (type,key) match
+// as the same entity and fast-forward it into main's canonical, leaving ONE
+// canonical on main and no "similar"/left-for-review leftover.
+func TestMergeBranchSameEntityReExtractionCollapsesCanonical(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "integration test requires database")
+	}
+	ctx := context.Background()
+
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "graph_same_entity_reextract")
+	t.Cleanup(tdb.Close)
+	db := tdb.GetDB()
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := &config.Config{}
+	cfg.Graph.MaxListLimit = 100_000
+	repo := graph.NewRepository(db, log, cfg)
+	svc := graph.NewService(repo, log, nil, nil, nil, nil, nil, graph.NoopEventSink{}, branches.NewStore(db), nil)
+
+	orgID := uuid.NewString()
+	require.NoError(t, testutil.CreateTestOrganization(ctx, db, orgID, "Same Entity Org"))
+	projectID := uuid.NewString()
+	require.NoError(t, testutil.CreateTestProject(ctx, db, testutil.TestProject{
+		ID: projectID, OrgID: orgID, Name: "Same Entity Project",
+	}, testutil.AdminUser.ID))
+	pid := uuid.MustParse(projectID)
+
+	// Seed the entity on main.
+	mainObj, _, err := svc.CreateOrUpdate(ctx, pid, &graph.CreateGraphObjectRequest{
+		Type:       "Person",
+		Key:        strPtr("barry-farber"),
+		Properties: map[string]any{"name": "Barry Farber"},
+	}, nil)
+	require.NoError(t, err)
+	mainCanonical := mainObj.CanonicalID
+
+	// Re-extract the SAME entity onto a staging branch with additive properties
+	// (a schema-change backfill adds a field). The branch-scoped upsert lookup
+	// misses main's object and mints a NEW canonical — the #1186 bug.
+	sourceBranch := &graph.Branch{ID: uuid.New(), ProjectID: pid, Name: "reextract-src"}
+	require.NoError(t, repo.CreateBranch(ctx, sourceBranch))
+	_, _, err = svc.CreateOrUpdate(ctx, pid, &graph.CreateGraphObjectRequest{
+		Type:       "Person",
+		Key:        strPtr("barry-farber"),
+		BranchID:   &sourceBranch.ID,
+		Properties: map[string]any{"name": "Barry Farber", "role": "radio host"},
+	}, nil)
+	require.NoError(t, err)
+
+	// Merge with the auto-mode default policy.
+	resp, err := svc.MergeBranch(ctx, pid, nil, &graph.BranchMergeRequest{
+		SourceBranchID: sourceBranch.ID,
+		Execute:        true,
+		Policy:         "partial",
+	})
+	require.NoError(t, err)
+
+	require.Zero(t, resp.SimilarCount, "re-extraction of an existing entity must not be 'similar'")
+	require.Zero(t, resp.LeftForReviewCount, "re-extraction of an existing entity must not be left for review")
+	require.Equal(t, 1, resp.FastForwardCount, "re-extraction must fast-forward into the existing canonical")
+
+	// Exactly ONE canonical on main for this (type, key) — no duplicate.
+	var mainCanonicals int
+	require.NoError(t, db.NewRaw(
+		`SELECT count(*) FROM kb.graph_objects
+		 WHERE project_id = ? AND type = 'Person' AND key = 'barry-farber'
+		   AND branch_id IS NULL AND supersedes_id IS NULL`, pid,
+	).Scan(ctx, &mainCanonicals))
+	require.Equal(t, 1, mainCanonicals, "merge must collapse to a single main canonical")
+
+	// The surviving canonical is main's original one, and the branch source row
+	// is stamped as merged into it.
+	var headCanonical uuid.UUID
+	require.NoError(t, db.NewRaw(
+		`SELECT canonical_id FROM kb.graph_objects
+		 WHERE project_id = ? AND type = 'Person' AND key = 'barry-farber'
+		   AND branch_id IS NULL AND supersedes_id IS NULL`, pid,
+	).Scan(ctx, &headCanonical))
+	require.Equal(t, mainCanonical, headCanonical, "surviving canonical must be main's original")
+
+	var mergedTo *uuid.UUID
+	require.NoError(t, db.NewRaw(
+		`SELECT merged_to_canonical_id FROM kb.graph_objects
+		 WHERE project_id = ? AND branch_id = ? AND key = 'barry-farber'
+		   AND supersedes_id IS NULL`, pid, sourceBranch.ID,
+	).Scan(ctx, &mergedTo))
+	require.NotNil(t, mergedTo, "branch source must be stamped merged_to")
+	require.Equal(t, mainCanonical, *mergedTo, "branch source must point at main's canonical")
 }
