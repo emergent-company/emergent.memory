@@ -45,8 +45,11 @@ const (
 
 // untrustedDelimiterPattern matches the sequences a payload could use to break
 // out of the envelope or impersonate the harness: the envelope's own tags, a
-// system-message tag, and a chat control token (<|im_start|>, <|endoftext|>, …).
-var untrustedDelimiterPattern = regexp.MustCompile(`(?i)<(/?untrusted-content|/?system\b|\|[a-z_]{1,32}\|>)`)
+// system-message tag, a chat control token (<|im_start|>, <|endoftext|>, …), and
+// the entity-encoded forms of the envelope and system tags. The bracket role
+// markers of other chat templates ([INST], <<SYS>>) are deliberately not
+// matched: the models this runtime serves use Gemini's template, which has none.
+var untrustedDelimiterPattern = regexp.MustCompile(`(?i)&lt;(/?untrusted-content|/?system\b)|<(/?untrusted-content|/?system\b|\|[a-z_]{1,32}\|>)`)
 
 // externalContentBuiltinTools are tools in the internal catalog whose payload is
 // third-party content despite being served by this product: a fetched web page,
@@ -103,6 +106,13 @@ type ToolResultFenceStats struct {
 	// TrustedParts counts result parts left untouched because their tool is
 	// this product's own store.
 	TrustedParts int
+	// PolicyParts counts tool-policy outcomes (a rejected or cancelled human
+	// approval), which the executor authors and the model must read literally.
+	PolicyParts int
+	// NormalizeFailed counts fenced parts handed back untouched because their
+	// value could not be normalised. Unreachable for a value the ADK can send;
+	// counted so a silent fail-open would be visible in the log.
+	NormalizeFailed int
 	// BytesBefore and BytesAfter measure the fenced parts only.
 	BytesBefore int
 	BytesAfter  int
@@ -116,6 +126,11 @@ type ToolResultFenceStats struct {
 // ToolResponse (server-side tools) and CodeExecutionResult (native
 // code_execution, which never goes through a FunctionResponse at all). It never
 // panics on nil/empty requests or parts.
+//
+// Call it BEFORE boundModelRequestToolResults (applyModelContextBoundary does):
+// the envelope is part of what the model reads, so the bound has to measure the
+// fenced form. Fencing last would let a payload of many short strings multiply
+// a capped result several-fold with envelope overhead nothing re-checks.
 func fenceModelRequestToolResults(req *model.LLMRequest, trusted func(string) bool) ToolResultFenceStats {
 	var stats ToolResultFenceStats
 	if req == nil {
@@ -136,13 +151,28 @@ func fenceModelRequestToolResults(req *model.LLMRequest, trusted func(string) bo
 				if resp == nil {
 					continue
 				}
+				// A tool-policy outcome is the executor's own record of a human
+				// decision, injected under the governed tool's name. The model
+				// has to read "policy_decision": "rejected" literally (see
+				// toolPolicyResultInstruction), so wrapping it would turn a
+				// refused action into untrusted data that looks retryable. Only
+				// the reject/cancel branches carry this key; an approved call
+				// carries the tool's real result, which is fenced as usual.
+				if _, ok := resp["policy_decision"]; ok {
+					stats.PolicyParts++
+					continue
+				}
 				if trusted != nil && trusted(name) {
 					stats.TrustedParts++
 					continue
 				}
 				stats.BytesBefore += jsonSize(resp)
-				part.FunctionResponse.Response = fenceUntrustedResult(name, resp)
-				stats.BytesAfter += jsonSize(part.FunctionResponse.Response)
+				fenced, ok := fenceUntrustedResult(name, resp)
+				if !ok {
+					stats.NormalizeFailed++
+				}
+				part.FunctionResponse.Response = fenced
+				stats.BytesAfter += jsonSize(fenced)
 				stats.FencedParts++
 
 			case part.ToolResponse != nil:
@@ -155,8 +185,12 @@ func fenceModelRequestToolResults(req *model.LLMRequest, trusted func(string) bo
 					source = "server-tool"
 				}
 				stats.BytesBefore += jsonSize(resp)
-				part.ToolResponse.Response = fenceUntrustedResult(source, resp)
-				stats.BytesAfter += jsonSize(part.ToolResponse.Response)
+				fenced, ok := fenceUntrustedResult(source, resp)
+				if !ok {
+					stats.NormalizeFailed++
+				}
+				part.ToolResponse.Response = fenced
+				stats.BytesAfter += jsonSize(fenced)
 				stats.FencedParts++
 
 			case part.CodeExecutionResult != nil:
@@ -176,30 +210,36 @@ func fenceModelRequestToolResults(req *model.LLMRequest, trusted func(string) bo
 
 // fenceUntrustedResult returns a copy of resp whose every string leaf is wrapped
 // in an untrusted-content envelope. resp itself is never mutated: the same value
-// is persisted and streamed in full elsewhere.
+// is persisted and streamed in full elsewhere. ok is false when the value could
+// not be normalised and is therefore returned untouched.
 //
 // The value is normalised through JSON first (json.Number, no HTML escaping) so
 // the walk covers every shape a tool can return — a typed struct, a []string, a
 // map[string]string — instead of only the maps and slices our handlers build by
 // hand. json.Number keeps 64-bit ids exact.
-func fenceUntrustedResult(source string, resp map[string]any) map[string]any {
+func fenceUntrustedResult(source string, resp map[string]any) (fenced map[string]any, ok bool) {
 	norm, err := normalizeJSONValue(resp)
 	if err != nil {
 		// The ADK marshals every function response it sends, so a value that
 		// cannot be normalised cannot reach the model either. Hand it back
 		// untouched rather than dropping the result.
-		return resp
+		return resp, false
 	}
-	fenced, ok := fenceUntrustedValue(source, norm).(map[string]any)
+	fenced, ok = fenceUntrustedValue(source, norm).(map[string]any)
 	if !ok {
-		return resp
+		return resp, false
 	}
-	return fenced
+	return fenced, true
 }
 
 // fenceUntrustedValue wraps every non-blank string in v, descending into maps
 // and slices, and defangs map keys. Scalars (numbers, bools, null) are returned
 // as they are.
+//
+// Keys are defanged but not wrapped. A JSON key has to stay addressable —
+// wrapping it would make every field name an envelope — and a defanged key can
+// no longer present a delimiter as markup, so the exposure is "key text is not
+// inside the declared region" rather than "key text can break out".
 func fenceUntrustedValue(source string, v any) any {
 	switch t := v.(type) {
 	case string:
@@ -232,14 +272,18 @@ func wrapUntrusted(source, text string) string {
 
 // defangUntrustedText rewrites the opening "<" of every sequence the payload
 // could use to close the envelope early or impersonate a system message as the
-// literal text "&lt;". The escape is visible and reversible by a reader, but the
-// payload can no longer contain a tag at all, so the envelope cannot be broken
-// out of by construction.
+// literal text "&lt;". An entity-encoded tag is rewritten too ("&lt;" →
+// "&amp;lt;"), so a consumer that unescapes HTML entities before reading the
+// text still finds no tag. The escape is visible and reversible by a reader, but
+// the payload can no longer present a delimiter as markup.
 func defangUntrustedText(s string) string {
 	if !untrustedDelimiterPattern.MatchString(s) {
 		return s
 	}
 	return untrustedDelimiterPattern.ReplaceAllStringFunc(s, func(match string) string {
+		if match[0] == '&' {
+			return "&amp;" + match[1:]
+		}
 		return "&lt;" + match[1:]
 	})
 }

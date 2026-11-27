@@ -13,7 +13,14 @@ import (
 	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
-// Bounded tool-result policy (issue #1205).
+// Tool-result model-context boundary (issues #1205, #1142).
+//
+// Two transformations apply to tool results on their way to the model, in one
+// place and in one order (applyModelContextBoundary):
+//
+//  1. untrusted-content fencing (tool_result_fencing.go) marks third-party
+//     results as data the model must not follow as instructions;
+//  2. bounding (this file) caps how much of any result the model reads.
 //
 // Tool results are fed back into the model context verbatim, so an unbounded
 // result (a 361 KB entity-query/entity-edges-get payload was observed) inflates
@@ -130,6 +137,21 @@ type ToolResultBoundStats struct {
 	ElidedResults    int
 	BytesBefore      int
 	BytesAfter       int
+}
+
+// applyModelContextBoundary applies both model-context transformations to req in
+// place, in the only order that keeps them honest: fence first, bound second.
+//
+// Fencing is part of what the model reads, so the bound has to measure the
+// fenced form. Bounding first would let a payload made of many short strings —
+// the shape an external server controls — multiply a capped result several-fold
+// with envelope overhead that nothing re-checks, blowing the total budget. It
+// would also wrap the bound's own truncation/elision guidance, which the model
+// must read literally, in an untrusted envelope.
+func applyModelContextBoundary(req *model.LLMRequest, bounds ToolResultBounds, trusted func(string) bool) (bound ToolResultBoundStats, fence ToolResultFenceStats) {
+	fence = fenceModelRequestToolResults(req, trusted)
+	bound = boundModelRequestToolResults(req, bounds)
+	return bound, fence
 }
 
 // boundModelRequestToolResults mutates req in place, bounding the
