@@ -702,3 +702,32 @@ func TestConvertRelayResponse(t *testing.T) {
 		assert.Equal(t, "y", nested["x"])
 	})
 }
+
+// Fencing provenance is read from where a tool was registered, not from what it
+// is called: the pooled names share one namespace with the builtin catalog and
+// the agent-runtime tools (issue #1144 review).
+func TestToolPoolExternalToolNamesExcludesBuiltins(t *testing.T) {
+	tp := &ToolPool{
+		log:   slog.Default(),
+		cache: make(map[string]*projectToolCache),
+	}
+	tp.cache["p"] = &projectToolCache{
+		toolNames: []string{"entity-get", "acme_search", "relay1_read"},
+		builtinTools: map[string]bool{
+			"entity-get": true,
+		},
+	}
+
+	got := tp.ExternalToolNames("p")
+
+	assert.Equal(t, map[string]bool{"acme_search": true, "relay1_read": true}, got)
+	assert.False(t, got["entity-get"], "a builtin tool is not external provenance")
+}
+
+// A project with no external tools reports nil, which leaves the fence's
+// predicate on the catalog and therefore failing closed (issue #1144 review).
+func TestToolPoolExternalToolNamesNilWhenAllBuiltin(t *testing.T) {
+	tp := buildTestPool(t, []string{"entity-get", "entity-create"})
+
+	assert.Nil(t, tp.ExternalToolNames("test-project"))
+}

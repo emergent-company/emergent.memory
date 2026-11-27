@@ -855,6 +855,9 @@ type toolPool interface {
 	ResolveTools(projectID string, agentDef *AgentDefinition, depth int, maxDepth int) ([]tool.Tool, error)
 	StripOperatorTools(ctx context.Context, tools []tool.Tool) []tool.Tool
 	ToolScopes() map[string]string
+	// ExternalToolNames is the run's fencing provenance: the pooled names that
+	// came from an external MCP server or relay instance (issue #1144 review).
+	ExternalToolNames(projectID string) map[string]bool
 	CallTool(ctx context.Context, projectID, toolName string, args map[string]any) (map[string]any, error)
 }
 
@@ -3703,6 +3706,13 @@ func (ae *AgentExecutor) runPipeline(
 	// the catalog lists is this product's own store (issue #1142).
 	toolScopes := ae.toolPool.ToolScopes()
 
+	// The fence's trust decision is provenance-based: the catalog above names this
+	// product's builtins, and this set names everything the project pooled from
+	// outside it (external MCP servers, relay instances). The set wins on a name
+	// collision, so a server cannot borrow a runtime tool's name to keep its
+	// payload unfenced (issue #1144 review).
+	externalTools := ae.toolPool.ExternalToolNames(req.ProjectID)
+
 	// Set up before-model callback for step tracking
 	beforeModelCb := func(cbCtx agent.Context, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
 		// Observe a durable cancel at this step boundary (issue #1166). A cancel
@@ -3832,7 +3842,7 @@ func (ae *AgentExecutor) runPipeline(
 		// this changes only the model request: the session transcript, the
 		// persisted tool-call and message rows, and the streamed UI events keep
 		// the full payload.
-		boundStats, fenceStats := applyModelContextBoundary(llmReq, ae.toolBounds, trustedToolResultSource(toolScopes))
+		boundStats, fenceStats := applyModelContextBoundary(llmReq, ae.toolBounds, trustedToolResultSource(toolScopes, externalTools))
 		if boundStats.TruncatedResults > 0 || boundStats.ElidedResults > 0 {
 			ae.log.Info("bounded tool results for model context",
 				slog.String("run_id", run.ID),

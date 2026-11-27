@@ -1040,6 +1040,36 @@ func (tp *ToolPool) ToolNames(projectID string) []string {
 	return names
 }
 
+// ExternalToolNames returns the names in the project's pool that did not come
+// from the builtin catalog: external MCP servers (pooled as
+// <slugified server>_<tool>) and MCP relay instances. Their results are
+// third-party content.
+//
+// Callers use this as fencing provenance (issue #1142, review of #1144). It is a
+// set of registered names rather than a lookup by name shape because the pooled
+// names share one namespace with the builtin catalog and the agent-runtime
+// tools — an external server named "work" exposing "complete" produces
+// "work_complete", the name of a trusted runtime tool. Provenance cannot be
+// spoofed by a server picking its tool names; a name comparison can.
+//
+// Returns nil when the project has no external tools, which leaves the fence's
+// predicate on the catalog and therefore failing closed for anything it does not
+// list.
+func (tp *ToolPool) ExternalToolNames(projectID string) map[string]bool {
+	cache := tp.getOrBuildCache(projectID)
+	var names map[string]bool
+	for _, name := range cache.toolNames {
+		if cache.builtinTools[name] {
+			continue
+		}
+		if names == nil {
+			names = make(map[string]bool)
+		}
+		names[name] = true
+	}
+	return names
+}
+
 // ToolScopes returns a name→RequiredScope map for the built-in and dynamic MCP
 // tool catalog. It is the authoritative scope source for policy enforcement,
 // matching the scope the read DTO derives group membership from (dynamic tools
