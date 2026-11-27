@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/catalog"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -477,7 +478,7 @@ func (h *Handler) InstallCatalog(c echo.Context) error {
 // @Param        q query string true "Free-text concept"
 // @Param        limit query int false "Maximum matches (default 10, max 50)"
 // @Param        mode query string false "lexical | semantic | hybrid (default hybrid)"
-// @Success      200 {array} CatalogTypeMatch "Ranked matches"
+// @Success      200 {array} catalog.TypeMatch "Ranked matches"
 // @Failure      400 {object} apperror.Error "Missing query"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Router       /api/blueprints/catalog/resolve [get]
@@ -495,7 +496,7 @@ func (h *Handler) ResolveCatalog(c echo.Context) error {
 	}
 
 	var (
-		matches []CatalogTypeMatch
+		matches []catalog.TypeMatch
 		err     error
 	)
 	switch strings.ToLower(strings.TrimSpace(c.QueryParam("mode"))) {
@@ -518,7 +519,7 @@ func (h *Handler) ResolveCatalog(c echo.Context) error {
 // @Tags         blueprints
 // @Produce      json
 // @Param        name query string true "Catalog type name (e.g. Movie)"
-// @Success      200 {object} CatalogTypeDetail "Type detail"
+// @Success      200 {object} catalog.TypeDetail "Type detail"
 // @Failure      400 {object} apperror.Error "Missing name"
 // @Failure      404 {object} apperror.Error "Unknown catalog type"
 // @Router       /api/blueprints/catalog/type [get]

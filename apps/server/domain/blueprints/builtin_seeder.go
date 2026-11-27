@@ -13,6 +13,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/domain/catalog"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -24,33 +25,79 @@ import (
 //go:embed builtin_packs
 var builtinPacksFS embed.FS
 
-// ListBuiltinObjectTypes returns the object types defined by the bundled
-// taxonomy packs — the platform's common-entity taxonomy — as manifest
-// definitions (name, label, description, labels, properties). Discovery uses it
-// to align a proposed type against a canonical, well-described set before
-// inventing a new one, so the same concept keeps one name and schema across runs.
-// It reads the embedded manifests directly (no DB, no blueprint apply needed).
-// Only packs marked `taxonomy: true` are included: the other bundled packs
-// (task-board, agent-notes, session-message-types, dreaming-agent) define
-// platform-internal object types that must not be offered as alignment targets.
+// ListBuiltinObjectTypes returns the platform's common-entity taxonomy as
+// manifest definitions: the built-in catalog's types first (canonical), then
+// any `taxonomy: true` blueprint packs that add domain types (e.g. tv-movies).
+// Discovery aligns a proposed type against this set before inventing a new one.
 //
-// A pack that fails to load is skipped with a warning rather than failing the
-// whole load: one malformed pack must not silently disable taxonomy alignment
-// for every other pack.
+// The catalog is reference data (domain/catalog), not a blueprint; packs are
+// read directly from the embedded manifests. Types are deduplicated by name, so
+// a pack cannot shadow a catalog type, and one malformed pack is skipped with a
+// warning rather than disabling alignment for every other pack.
 func ListBuiltinObjectTypes() ([]ObjectTypeDef, error) {
-	return listBuiltinObjectTypes(builtinPacksFS, "builtin_packs")
-}
-
-// listBuiltinObjectTypes is the fs.FS-injectable core of ListBuiltinObjectTypes,
-// so per-pack error isolation can be tested without a malformed embedded pack.
-// It reads the same taxonomy catalog as ListBuiltinTaxonomy and returns just the
-// deduplicated object types.
-func listBuiltinObjectTypes(fsys fs.FS, root string) ([]ObjectTypeDef, error) {
-	cat, err := listBuiltinTaxonomy(fsys, root)
+	cat, err := catalog.Load()
 	if err != nil {
 		return nil, err
 	}
-	return cat.Types, nil
+	out := catalogObjectTypeDefs(cat.Types)
+	seen := make(map[string]string, len(out))
+	for _, t := range cat.Types {
+		seen[t.Name] = "catalog"
+	}
+
+	packTypes, err := listBuiltinObjectTypes(builtinPacksFS, "builtin_packs")
+	if err != nil {
+		return nil, err
+	}
+	for _, ot := range packTypes {
+		if _, ok := seen[ot.Name]; ok {
+			continue
+		}
+		seen[ot.Name] = "taxonomy-pack"
+		out = append(out, ot)
+	}
+	return out, nil
+}
+
+// listBuiltinObjectTypes is the fs.FS-injectable, packs-only core: the
+// deduplicated object types of `taxonomy: true` packs. It does not include the
+// catalog, so error-isolation tests can exercise a malformed pack in isolation.
+func listBuiltinObjectTypes(fsys fs.FS, root string) ([]ObjectTypeDef, error) {
+	entries, err := fs.ReadDir(fsys, root)
+	if err != nil {
+		return nil, err
+	}
+	var out []ObjectTypeDef
+	seen := make(map[string]string)
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		desc, err := loadBlueprintDir(fsys, path.Join(root, name), name)
+		if err != nil {
+			slog.Warn("skipping unloadable builtin blueprint pack",
+				slog.String("pack", name), logger.Error(err))
+			continue
+		}
+		for _, p := range desc.Packs {
+			if !p.Taxonomy {
+				continue
+			}
+			for _, ot := range p.ObjectTypes {
+				if prev, ok := seen[ot.Name]; ok {
+					slog.Debug("skipping duplicate taxonomy object type",
+						slog.String("type", ot.Name),
+						slog.String("kept_pack", prev),
+						slog.String("skipped_pack", p.Name))
+					continue
+				}
+				seen[ot.Name] = p.Name
+				out = append(out, ot)
+			}
+		}
+	}
+	return out, nil
 }
 
 // BuiltinSeeder seeds the platform's built-in blueprints at server startup: each
