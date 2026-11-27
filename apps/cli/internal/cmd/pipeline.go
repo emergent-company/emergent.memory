@@ -196,11 +196,11 @@ func printPipelineView(cmd *cobra.Command, view *projects.PipelineView) {
 	if view.Customized {
 		customized = " (customized)"
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Mode: %s%s\n", view.Mode, customized)
-	fmt.Fprintf(cmd.OutOrStdout(), "Schema generation: %d\n", view.SchemaGeneration)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Mode: %s%s\n", view.Mode, customized)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Schema generation: %d\n", view.SchemaGeneration)
 	if len(view.Policy) > 0 {
 		var buf bytes.Buffer
 		_ = json.Indent(&buf, view.Policy, "  ", "  ")
-		fmt.Fprintf(cmd.OutOrStdout(), "Policy:\n%s\n", buf.String())
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Policy:\n%s\n", buf.String())
 	}
 }
