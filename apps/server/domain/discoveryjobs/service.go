@@ -19,6 +19,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
+	"github.com/emergent-company/emergent.memory/domain/blueprints"
 	"github.com/emergent-company/emergent.memory/domain/catalog"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/extraction"
@@ -115,6 +116,11 @@ type Service struct {
 	// candidate set before a run calls the model (see narrowTaxonomy). Populated
 	// alongside taxonomy in SetTaxonomy.
 	taxonomyTypes []catalog.Type
+	// relationshipTaxonomy is the built-in catalog's relationship vocabulary,
+	// offered to the relationship phase so a proposed edge reuses a canonical
+	// name (works_for, located_at, home_location, …) instead of inventing a
+	// synonym (see SetRelationshipTaxonomy).
+	relationshipTaxonomy []blueprints.RelationshipTypeDef
 }
 
 // documentCap is the effective per-run document cap.
@@ -2328,6 +2334,36 @@ func (s *Service) discoverRelationships(ctx context.Context, jobID uuid.UUID, ty
 // that links two types: the document text is not part of this prompt, so a
 // table whose Episode rows carry a Guest column only reads as "a guest appears
 // in an episode" when the column is visible here (#234).
+// SetRelationshipTaxonomy injects the built-in catalog's relationship vocabulary
+// that the relationship phase prefers, so a proposed edge converges on a
+// canonical catalog name instead of an invented synonym. Nil-safe.
+func (s *Service) SetRelationshipTaxonomy(t []blueprints.RelationshipTypeDef) {
+	s.relationshipTaxonomy = t
+}
+
+// buildRelationshipVocabulary renders the canonical relationship names offered
+// to the prompt, or "" when none are wired.
+func (s *Service) buildRelationshipVocabulary() string {
+	if len(s.relationshipTaxonomy) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nPrefer these canonical relationship names when they fit the source and target types — reuse the exact name instead of inventing a synonym:\n")
+	for _, r := range s.relationshipTaxonomy {
+		b.WriteString("- ")
+		b.WriteString(r.Name)
+		if r.SourceType != "" && r.TargetType != "" {
+			b.WriteString(" (")
+			b.WriteString(r.SourceType)
+			b.WriteString(" -> ")
+			b.WriteString(r.TargetType)
+			b.WriteString(")")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 func (s *Service) buildRelationshipDiscoveryPrompt(types []DiscoveredType, kbPurpose string) string {
 	return fmt.Sprintf(`You are analyzing a knowledge base with the following purpose:
 
@@ -2335,7 +2371,7 @@ func (s *Service) buildRelationshipDiscoveryPrompt(types []DiscoveredType, kbPur
 
 We have discovered the following entity types:
 %s
-
+%s
 Discover important relationships between these types. Treat a property that
 names another discovered type (for example an Episode's "guest" property) as
 evidence of a relationship rather than a plain attribute.
@@ -2343,7 +2379,7 @@ evidence of a relationship rather than a plain attribute.
 For each relationship, provide ONLY:
 - from_type: The source type (must be one of the types above)
 - to_type: The target type (must be one of the types above)
-- relationship_name: A clear name for the relationship
+- relationship_name: A clear name for the relationship (reuse a canonical relationship name above when one fits)
 - description: At most 8 words describing the relationship
 - confidence: How confident you are about this relationship (0-1)
 
@@ -2361,7 +2397,7 @@ Return ONLY a JSON object with this structure (no markdown, no code blocks):
 }
 
 Do not include cardinality. Keep each description to at most 8 words.
-Focus on the most important relationships.`, kbPurpose, s.buildRelationshipDiscoveryTypes(types))
+Focus on the most important relationships.`, kbPurpose, s.buildRelationshipDiscoveryTypes(types), s.buildRelationshipVocabulary())
 }
 
 // buildRelationshipDiscoveryTypes renders one bullet per type: its name, its

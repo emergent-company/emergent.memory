@@ -159,3 +159,21 @@ func TestSchemaOrgIsNotABuiltinBlueprintPack(t *testing.T) {
 			"schema.org must live in domain/catalog data, not builtin_packs")
 	}
 }
+
+// TestListBuiltinRelationshipTypes pins that discovery's relationship phase is
+// offered the catalog's canonical relationship vocabulary, unique by name.
+func TestListBuiltinRelationshipTypes(t *testing.T) {
+	rels, err := ListBuiltinRelationshipTypes()
+	require.NoError(t, err)
+	require.NotEmpty(t, rels)
+
+	byName := map[string]bool{}
+	for _, r := range rels {
+		require.NotEmpty(t, r.Name)
+		require.False(t, byName[r.Name], "duplicate relationship %q", r.Name)
+		byName[r.Name] = true
+	}
+	for _, want := range []string{"works_for", "member_of", "located_at", "contained_in_place", "home_location", "content_location", "spouse", "part_of_series"} {
+		require.True(t, byName[want], "catalog relationship vocabulary must include %s", want)
+	}
+}

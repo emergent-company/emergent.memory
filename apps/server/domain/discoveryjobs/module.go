@@ -137,6 +137,12 @@ func wireTaxonomy(svc *Service) {
 		})
 	}
 	svc.SetTaxonomy(taxonomy)
+
+	if relDefs, rerr := blueprints.ListBuiltinRelationshipTypes(); rerr == nil {
+		svc.SetRelationshipTaxonomy(relDefs)
+	} else {
+		svc.log.Warn("failed to load built-in relationship taxonomy; discovery runs without it", logger.Error(rerr))
+	}
 }
 
 // NewService creates a new discovery jobs service.
