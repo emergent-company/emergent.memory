@@ -28,7 +28,7 @@ templ SchemaCatalogPage(view *SchemaCatalogView, loadErr error) {
 			if v.Catalog != nil {
 				total = v.Catalog.Total
 			} }}
-			@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Catalog")), "", "Catalog", "Built-in entity types you can install into this project. Only requested types are installed; relationships appear when both endpoint types are present.")
+			@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Catalog")), "", "Catalog", "Built-in entity types you can install into this project. Only requested types are installed, and relationships appear when both endpoint types are present. A name another pack already provides keeps that pack's definition, so it is shown as provided rather than installable.")
 			@flashToasts(v.FlashMsg, v.FlashErr)
 			@layout.Rail(schemaSubNav("catalog"), nil) {
 				<form method="get" action="/schema/catalog" class="mb-4 flex flex-wrap items-center gap-2" data-testid="catalog-search-form">
@@ -76,7 +76,7 @@ templ SchemaCatalogPage(view *SchemaCatalogView, loadErr error) {
 								<h2 class="text-sm font-semibold text-muted-bright capitalize">{ g.Key }</h2>
 								<div class="grid gap-3 sm:grid-cols-2">
 									for _, t := range g.Types {
-										@catalogTypeCard(t, v.Installed[t.Name])
+										@catalogTypeCard(t, v.States[t.Name])
 									}
 								</div>
 							</section>
@@ -89,16 +89,19 @@ templ SchemaCatalogPage(view *SchemaCatalogView, loadErr error) {
 }
 
 // catalogTypeCard is one browsable catalog type: icon/color accent, label, key,
-// description, facets, and an install action when the project lacks it.
-templ catalogTypeCard(t CatalogSummary, installed bool) {
+// description, facets, and an install action when the project lacks the name —
+// or a provenance badge when a pack already provides it.
+templ catalogTypeCard(t CatalogSummary, state catalogInstallState) {
 	<div class="flex gap-3 rounded-box border border-base-content/10 bg-base-100 p-3" data-testid="catalog-type" data-catalog-type={ t.Name }>
 		@typeIconTile(t.UI.icon(), t.UI.color())
 		<div class="min-w-0 flex-1">
 			<div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
 				<a class="truncate text-sm font-medium text-base-content hover:underline" href={ templ.URL(catalogTypeHref(t.Name)) }>{ catalogSummaryLabel(t) }</a>
 				<span class="text-muted-faint truncate font-mono text-[11px]">{ t.Name }</span>
-				if installed {
+				if state.Installed {
 					@ui.Badge(ui.BadgeProps{Label: "Installed", Variant: ui.BadgeSecondary, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
+				} else if state.ProvidedBy != "" {
+					@ui.Badge(ui.BadgeProps{Label: "Provided by " + state.ProvidedBy, Href: objectTypeHref(t.Name), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--arrow-up-right"})
 				}
 			</div>
 			if t.Description != "" {
@@ -118,7 +121,7 @@ templ catalogTypeCard(t CatalogSummary, installed bool) {
 				}
 			</div>
 		</div>
-		if !installed {
+		if state.Available() {
 			<form method="post" action="/schema/catalog/install" class="shrink-0 self-start">
 				<input type="hidden" name="type" value={ t.Name }/>
 				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonXS, Attrs: templ.Attributes{"data-testid": "catalog-install"}}) {
@@ -160,8 +163,10 @@ templ SchemaCatalogTypePage(view *SchemaCatalogTypeView, loadErr error) {
 							<div class="flex flex-wrap items-center gap-2">
 								<h1 class="text-lg font-semibold">{ catalogTypeLabel(t) }</h1>
 								<span class="text-muted-faint font-mono text-xs">{ t.Name }</span>
-								if v.Installed {
+								if v.State.Installed {
 									@ui.Badge(ui.BadgeProps{Label: "Installed", Variant: ui.BadgeSecondary, Size: ui.BadgeSizeSM, Icon: "lucide--check"})
+								} else if v.State.ProvidedBy != "" {
+									@ui.Badge(ui.BadgeProps{Label: "Provided by " + v.State.ProvidedBy, Href: objectTypeHref(t.Name), Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM, Icon: "lucide--arrow-up-right"})
 								}
 							</div>
 							<div class="mt-2 flex flex-wrap items-center gap-1">
@@ -176,7 +181,7 @@ templ SchemaCatalogTypePage(view *SchemaCatalogTypeView, loadErr error) {
 								}
 							</div>
 						</div>
-						if !v.Installed {
+						if v.State.Available() {
 							<form method="post" action="/schema/catalog/install">
 								<input type="hidden" name="type" value={ t.Name }/>
 								@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--plus"}) {
@@ -185,6 +190,16 @@ templ SchemaCatalogTypePage(view *SchemaCatalogTypeView, loadErr error) {
 							</form>
 						}
 					</div>
+
+					if v.State.ProvidedBy != "" && !v.State.Installed {
+						<div class="rounded-box border border-warning/40 bg-warning/5 px-4 py-3" data-testid="catalog-provided-by">
+							<p class="text-sm font-medium">This project already has a type named { t.Name }</p>
+							@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+								It is provided by <span class="font-mono">{ v.State.ProvidedLabel() }</span>, so that pack's definition is the live one: the properties above describe the catalog's own declaration, not the project's type. Because a project resolves one type per name from the newest install, a catalog type is offered for install only when the name is free — installing this name would replace the existing definition with the catalog's.
+							}
+							<a class="mt-2 inline-block text-xs font-medium text-primary hover:underline" href={ templ.URL(objectTypeHref(t.Name)) }>View the project type</a>
+						</div>
+					}
 
 					if len(d.Ancestors) > 0 {
 						<div class="flex flex-wrap items-center gap-1 text-xs" data-testid="catalog-ancestors">
