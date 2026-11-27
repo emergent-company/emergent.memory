@@ -372,6 +372,40 @@ func fetchObjects(ctx context.Context, host, key, projectID string) ([]graphObje
 	return out.Items, nil
 }
 
+// waitForMainSettle polls the main-graph object count until it stops changing
+// for a few consecutive polls. Extraction jobs report "completed" before the
+// schema-change incremental backfill and the async auto-merge (which waits for
+// embeddings) have settled, so reading immediately under-reports objects and
+// recall during schema churn (see #1215). Best-effort: returns an error on
+// timeout that the caller logs as a warning and continues.
+func waitForMainSettle(ctx context.Context, host, key, projectID string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	const poll = 5 * time.Second
+	const stableNeeded = 3
+	last := -1
+	stable := 0
+	for {
+		objects, err := fetchObjects(ctx, host, key, projectID)
+		if err != nil {
+			return err
+		}
+		n := len(objects)
+		if n == last {
+			stable++
+			if stable >= stableNeeded {
+				return nil
+			}
+		} else {
+			stable = 0
+			last = n
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("main graph did not settle within %s (last count %d)", timeout, n)
+		}
+		time.Sleep(poll)
+	}
+}
+
 // fetchRelationshipCount returns the number of graph relationships (edges) in
 // the project, using the relationships/search endpoint's exact total. It falls
 // back to counting returned items if the total is omitted.
@@ -458,6 +492,12 @@ func main() {
 			log.Fatalf("wait discovery %s: %v", ep.ID, err)
 		}
 		if err := waitExtractionDone(ctx, *host, *apiKey, *projectID, 180*time.Second); err != nil {
+			log.Printf("  warning: %v", err)
+		}
+		// The schema-change backfill and the async auto-merge (which waits for
+		// embeddings) settle after the extraction jobs report completed; wait for
+		// main to stabilise so per-episode objects/recall are not under-reported.
+		if err := waitForMainSettle(ctx, *host, *apiKey, *projectID, 180*time.Second); err != nil {
 			log.Printf("  warning: %v", err)
 		}
 
