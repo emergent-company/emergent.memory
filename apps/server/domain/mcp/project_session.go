@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/emergent-company/emergent.memory/domain/oauthas"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -182,7 +183,7 @@ func (s *Service) ListMemberProjects(ctx context.Context, user *auth.AuthUser, a
 	// project, so there is no membership query to make.
 	boundOnly := false
 	if user.APITokenProjectID != "" {
-		oauthGranted, err := s.tokenHasActiveOAuthGrant(ctx, user.APITokenID)
+		oauthGranted, err := s.tokenHasAccountWideOAuthGrant(ctx, user.APITokenID)
 		if err != nil {
 			return nil, err
 		}
@@ -274,11 +275,17 @@ func (s *Service) GetProjectSummary(ctx context.Context, projectID, activeProjec
 	return &row, nil
 }
 
-// tokenHasActiveOAuthGrant reports whether tokenID was minted by the built-in
-// OAuth authorization server and its grant is still active. Such a token is a
-// user-scoped connector credential: its consent picks an initial project, but
-// the session may switch to any project the owning user belongs to.
-func (s *Service) tokenHasActiveOAuthGrant(ctx context.Context, tokenID string) (bool, error) {
+// tokenHasAccountWideOAuthGrant reports whether tokenID was minted by the
+// built-in OAuth authorization server under account-wide consent and its grant
+// is still active. Such a token is a user-scoped connector credential: its
+// consent picks a starting project, but the session may switch to any project
+// the owning user belongs to.
+//
+// The project_scope filter is the consent boundary (#1163): grants created
+// before account-wide consent existed are 'project' and keep the strict token
+// binding, so this change never widens an already-issued grant without the
+// user approving the new consent screen.
+func (s *Service) tokenHasAccountWideOAuthGrant(ctx context.Context, tokenID string) (bool, error) {
 	if tokenID == "" || s.db == nil {
 		return false, nil
 	}
@@ -286,6 +293,7 @@ func (s *Service) tokenHasActiveOAuthGrant(ctx context.Context, tokenID string) 
 		TableExpr("core.oauth_grants").
 		Where("token_id = ?", tokenID).
 		Where("revoked_at IS NULL").
+		Where("project_scope = ?", oauthas.OAuthGrantScopeAccount).
 		Exists(ctx)
 	if err != nil {
 		return false, apperror.NewInternal("failed to resolve oauth grant", err)

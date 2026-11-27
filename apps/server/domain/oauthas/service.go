@@ -417,6 +417,12 @@ func (s *Service) ExchangeCode(ctx context.Context, req TokenRequest) (*TokenRes
 		Scopes:    scopes,
 		TokenID:   token.ID,
 		CreatedAt: now,
+		// The consent screen that produced this code names the project as the
+		// starting project and says the app may switch to the user's other
+		// projects (#1163), so the grant records the account-wide model. Grants
+		// minted before that copy existed keep the column default 'project' and
+		// stay bound to their project until the user re-consents.
+		ProjectScope: OAuthGrantScopeAccount,
 	}
 	if err := s.repo.CreateGrant(ctx, grant); err != nil {
 		// Do not leave an unlinked token behind.
@@ -457,15 +463,16 @@ func (s *Service) ListGrants(ctx context.Context, userID string) ([]GrantDTO, er
 			scopes = []string{}
 		}
 		out = append(out, GrantDTO{
-			ID:          row.ID,
-			ClientID:    row.ClientID,
-			ClientName:  row.ClientName,
-			ProjectID:   row.ProjectID,
-			ProjectName: row.ProjectName,
-			Scopes:      scopes,
-			CreatedAt:   row.CreatedAt,
-			LastUsedAt:  row.LastUsedAt,
-			RevokedAt:   row.RevokedAt,
+			ID:           row.ID,
+			ClientID:     row.ClientID,
+			ClientName:   row.ClientName,
+			ProjectID:    row.ProjectID,
+			ProjectName:  row.ProjectName,
+			Scopes:       scopes,
+			CreatedAt:    row.CreatedAt,
+			LastUsedAt:   row.LastUsedAt,
+			RevokedAt:    row.RevokedAt,
+			ProjectScope: row.ProjectScope,
 		})
 	}
 	return out, nil

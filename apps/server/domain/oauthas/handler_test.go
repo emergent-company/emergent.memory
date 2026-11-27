@@ -328,6 +328,10 @@ func TestGrantsHandlers(t *testing.T) {
 	require.Equal(t, "emergent.feedback", grants[0].ClientName)
 	require.Equal(t, "Demo Project", grants[0].ProjectName)
 	require.Equal(t, []string{"graph:read", "projects:read"}, grants[0].Scopes)
+	// The exchange records the consent model the consent screen showed, and the
+	// list API reports it so the Connected-apps page can label the project as
+	// the starting project rather than the grant's boundary (#1163).
+	require.Equal(t, OAuthGrantScopeAccount, grants[0].ProjectScope)
 
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/oauth/grants/"+grants[0].ID, nil))

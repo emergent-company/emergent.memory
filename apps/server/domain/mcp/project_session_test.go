@@ -2,12 +2,14 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/emergent-company/emergent.memory/domain/oauthas"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
@@ -183,4 +185,60 @@ func TestExecuteListMemberProjectsEnvelope(t *testing.T) {
 	require.Equal(t, "proj-a", data["activeProjectId"])
 	require.Equal(t, 1, data["count"])
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestAccountWideOAuthGrantFilter pins the consent boundary that keeps this
+// change from widening grants the user never approved (#1163, review HIGH).
+//
+// The widening decision is made by one SQL predicate: only a grant whose
+// recorded consent model is 'account' makes a project-bound token a user-scoped
+// connector credential. Every grant minted before account-wide consent existed
+// carries the column default 'project', so the same lookup reads "no
+// widening" for it and the token keeps its strict project binding until the
+// user re-consents. Dropping the predicate here would silently re-widen those
+// grants, so the test asserts it is in the statement and keyed on the
+// credential — not only the Go-level return value.
+func TestAccountWideOAuthGrantFilter(t *testing.T) {
+	// bun inlines the bind args, so the statement carries the consent-model
+	// literal: matching it here fails if the predicate is dropped or the
+	// constant changes value.
+	query := regexp.QuoteMeta("SELECT") + `[\s\S]*core\.oauth_grants[\s\S]*project_scope = '` +
+		regexp.QuoteMeta(oauthas.OAuthGrantScopeAccount) + `'[\s\S]*`
+
+	t.Run("account-wide grant widens", func(t *testing.T) {
+		db, mock := newAuthzMockDB(t)
+		svc := &Service{db: db}
+		mock.ExpectQuery(query).
+			WillReturnRows(sqlmock.NewRows([]string{"?column?"}).AddRow(true))
+
+		accountWide, err := svc.tokenHasAccountWideOAuthGrant(context.Background(), "tok1")
+		require.NoError(t, err)
+		require.True(t, accountWide)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("project-scoped grant does not widen", func(t *testing.T) {
+		db, mock := newAuthzMockDB(t)
+		svc := &Service{db: db}
+		// A legacy grant still exists and is active; the filter is what excludes
+		// it, so the lookup answers false.
+		mock.ExpectQuery(query).
+			WillReturnRows(sqlmock.NewRows([]string{"?column?"}).AddRow(false))
+
+		accountWide, err := svc.tokenHasAccountWideOAuthGrant(context.Background(), "tok1")
+		require.NoError(t, err)
+		require.False(t, accountWide)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("error fails closed", func(t *testing.T) {
+		db, mock := newAuthzMockDB(t)
+		svc := &Service{db: db}
+		mock.ExpectQuery(query).
+			WillReturnError(errors.New("connection reset"))
+
+		accountWide, err := svc.tokenHasAccountWideOAuthGrant(context.Background(), "tok1")
+		require.Error(t, err)
+		require.False(t, accountWide)
+	})
 }

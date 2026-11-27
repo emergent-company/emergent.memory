@@ -69,12 +69,12 @@
     {
       "file": "apps/server/domain/mcp/project_session.go",
       "func": "ListMemberProjects",
-      "why": "read kb.projects joined to kb.orgs + kb.organization_memberships filtered by om.user_id = the authenticated caller, read-only; returns only projects of orgs the caller is a member of, and a project-bound non-OAuth token is narrowed to its own APITokenProjectID (the OAuth-grant widening is decided by tokenHasActiveOAuthGrant, server-side, failing closed)"
+      "why": "read kb.projects joined to kb.orgs + kb.organization_memberships filtered by om.user_id = the authenticated caller, read-only; returns only projects of orgs the caller is a member of, and a project-bound non-OAuth token is narrowed to its own APITokenProjectID (the OAuth-grant widening is decided by tokenHasAccountWideOAuthGrant, server-side, failing closed)"
     },
     {
       "file": "apps/server/domain/mcp/project_session.go",
-      "func": "tokenHasActiveOAuthGrant",
-      "why": "existence read of core.oauth_grants for ONE api-token id (revoked_at IS NULL), read-only and keyed by the credential being authorized; it only decides whether a project-bound token is a user-scoped OAuth connector credential — an error fails closed and a missing grant keeps the strict project binding"
+      "func": "tokenHasAccountWideOAuthGrant",
+      "why": "existence read of core.oauth_grants for ONE api-token id (revoked_at IS NULL AND project_scope = 'account'), read-only and keyed by the credential being authorized; it only decides whether a project-bound token is a user-scoped OAuth connector credential whose user consented to account-wide access — an error fails closed, a missing grant and a pre-#1163 'project'-scoped grant both keep the strict project binding"
     },
     {
       "file": "apps/server/domain/mcp/schema_tools.go",

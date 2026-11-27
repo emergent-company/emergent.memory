@@ -40,6 +40,16 @@ type OAuthAuthorizeResult struct {
 	RedirectURL string `json:"redirect_url"`
 }
 
+// Grant consent models (mirrors core.oauth_grants.project_scope, issue #1163).
+const (
+	// OAuthGrantScopeAccount: the app may switch the MCP session to any project
+	// the owning user belongs to; ProjectID is only the starting project.
+	OAuthGrantScopeAccount = "account"
+	// OAuthGrantScopeProject: the grant is bound to ProjectID. Every grant
+	// minted before account-wide consent existed reports this.
+	OAuthGrantScopeProject = "project"
+)
+
 // OAuthGrant is one connected app shown under Settings → Connected apps.
 type OAuthGrant struct {
 	ID          string     `json:"id"`
@@ -51,6 +61,10 @@ type OAuthGrant struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	LastUsedAt  *time.Time `json:"last_used_at"`
 	RevokedAt   *time.Time `json:"revoked_at"`
+	// ProjectScope is the consent model: "account" (the app may switch the MCP
+	// session to any project the user belongs to) or "project" (bound to
+	// ProjectID, the model every grant minted before #1163 uses).
+	ProjectScope string `json:"project_scope"`
 }
 
 // OAuthAuthorizeContext fetches the validated client, redirect URI, supported

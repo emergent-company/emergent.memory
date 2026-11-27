@@ -82,7 +82,7 @@ func TestAuthorizeProjectClaim(t *testing.T) {
 			wantErr:   false,
 		},
 		{
-			name: "grantless project-bound token claiming foreign project is forbidden",
+			name: "project-scoped or grantless project-bound token claiming a foreign project is forbidden",
 			user: &auth.AuthUser{
 				APITokenID: "tok1", ID: "u1", APITokenProjectID: "proj-own", Scopes: []string{"agents:write"},
 			},

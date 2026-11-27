@@ -150,10 +150,12 @@ templ connectedAppRevokeAction(id string) {
 }
 
 // ConnectedAppsPage lists the third-party applications the signed-in user has
-// authorized, with the project and scopes, and a revoke action.
+// authorized, with its starting project and scopes, and a revoke action. The
+// project is the *starting* project for an account-wide grant (#1163), so the
+// header must not call it the grant's boundary.
 templ ConnectedAppsPage(data connectedAppsData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Connected apps")), "", "Connected apps", "Applications you have authorized to access Memory. Each grant is limited to one project and the scopes shown; revoking it immediately invalidates its token.", detailHeaderOpts{Margin: "mb-6"})
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Connected apps")), "", "Connected apps", "Applications you have authorized to access Memory. A grant acts in its starting project, and may reach other projects you belong to if you approved account-wide access; revoking it immediately invalidates its token.", detailHeaderOpts{Margin: "mb-6"})
 
 		if data.Flash != "" {
 			@ui.Alert(ui.AlertProps{Type: ui.AlertSuccess, Style: ui.AlertStyleSoft, Message: data.Flash})
@@ -182,7 +184,11 @@ templ ConnectedAppsPage(data connectedAppsData) {
 								<div class="min-w-0">
 									<p class="font-medium">{ g.ClientName }</p>
 									@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
-										{ g.ProjectName }
+										if g.ProjectScope == OAuthGrantScopeAccount {
+											Starting project: { g.ProjectName }
+										} else {
+											Project: { g.ProjectName }
+										}
 									}
 									@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
 										Authorized { relTime(g.CreatedAt.Format("2006-01-02T15:04:05Z07:00")) }

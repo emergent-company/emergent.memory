@@ -44,8 +44,23 @@ type OAuthAuthorizationCode struct {
 	CreatedAt           time.Time  `bun:"created_at,notnull,default:now()"`
 }
 
-// OAuthGrant links a registered client to the project-scoped API token minted
-// for it (core.oauth_grants). Revoking the grant revokes the API token.
+// OAuth grant consent models (core.oauth_grants.project_scope, issue #1163).
+const (
+	// OAuthGrantScopeProject limits the grant to its project_id. This is the
+	// original consent model and the value every grant minted before
+	// account-wide consent existed carries, so those grants are never widened
+	// without a new consent.
+	OAuthGrantScopeProject = "project"
+	// OAuthGrantScopeAccount lets the app switch the MCP session to any project
+	// the owning user belongs to. The consent screen says so before the code is
+	// issued.
+	OAuthGrantScopeAccount = "account"
+)
+
+// OAuthGrant links a registered client to the API token minted for it
+// (core.oauth_grants). The token is a project API token; ProjectScope records
+// whether the user consented to it being usable across their projects (#1163).
+// Revoking the grant revokes the API token.
 type OAuthGrant struct {
 	bun.BaseModel `bun:"table:core.oauth_grants,alias:og"`
 
@@ -58,20 +73,25 @@ type OAuthGrant struct {
 	CreatedAt  time.Time  `bun:"created_at,notnull,default:now()"`
 	LastUsedAt *time.Time `bun:"last_used_at"`
 	RevokedAt  *time.Time `bun:"revoked_at"`
+	// ProjectScope is the consent model: OAuthGrantScopeProject or
+	// OAuthGrantScopeAccount. The default tag keeps a zero value out of the
+	// INSERT so the column's own default ('project') applies.
+	ProjectScope string `bun:"project_scope,notnull,default:'project'"`
 }
 
 // grantRow is the joined read model behind the grants list: a grant plus the
 // client and project display names. It is never written back.
 type grantRow struct {
-	ID          string     `bun:"id"`
-	ClientID    string     `bun:"client_id"`
-	ClientName  string     `bun:"client_name"`
-	UserID      string     `bun:"user_id"`
-	ProjectID   string     `bun:"project_id"`
-	ProjectName string     `bun:"project_name"`
-	Scopes      []string   `bun:"scopes,type:jsonb"`
-	TokenID     string     `bun:"token_id"`
-	CreatedAt   time.Time  `bun:"created_at"`
-	LastUsedAt  *time.Time `bun:"last_used_at"`
-	RevokedAt   *time.Time `bun:"revoked_at"`
+	ID           string     `bun:"id"`
+	ClientID     string     `bun:"client_id"`
+	ClientName   string     `bun:"client_name"`
+	UserID       string     `bun:"user_id"`
+	ProjectID    string     `bun:"project_id"`
+	ProjectName  string     `bun:"project_name"`
+	Scopes       []string   `bun:"scopes,type:jsonb"`
+	TokenID      string     `bun:"token_id"`
+	CreatedAt    time.Time  `bun:"created_at"`
+	LastUsedAt   *time.Time `bun:"last_used_at"`
+	RevokedAt    *time.Time `bun:"revoked_at"`
+	ProjectScope string     `bun:"project_scope"`
 }
