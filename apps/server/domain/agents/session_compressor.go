@@ -21,6 +21,12 @@ package agents
 //   - Tool calls are indexed, not discarded. For a graph agent the tool record
 //     IS the work: which objects were created and with which ids. Each dropped
 //     call contributes one bounded line of name + arguments.
+//   - The transcript is quoted, not trusted. This request is built here, so it
+//     never passes through beforeModelCb and the tool-result fence from #1142
+//     does not reach it. The dropped history is wrapped in the same
+//     untrusted-content envelope (session_compressor_fencing.go, #1143), because
+//     the summary it produces becomes pinned history that every later step
+//     reads: a fetched page must not be able to dictate what that says.
 //   - The rebuild is still delete + create (ADK has no event-log truncation),
 //     but the act is recorded in kb.agent_session_compactions so the session's
 //     ancestry is queryable. kb.agent_run_messages / kb.agent_run_tool_calls
@@ -357,6 +363,8 @@ func buildCompressionPrompt(dropped []*session.Event) (string, bool) {
 
 	var sb strings.Builder
 	sb.WriteString("You are a context summariser for a long-running agent session. The history below is about to be removed from the model's context window; only your summary of it will remain. The most recent turns are kept verbatim and are NOT part of this excerpt.\n\n")
+	sb.WriteString(compressorUntrustedInstruction)
+	sb.WriteString("\n\n")
 	sb.WriteString("Produce a concise but complete summary covering:\n")
 	sb.WriteString("- The user's overall goal or task\n")
 	sb.WriteString("- Key decisions or conclusions reached\n")
@@ -365,23 +373,22 @@ func buildCompressionPrompt(dropped []*session.Event) (string, bool) {
 
 	if prior := priorSummaries(dropped); prior != "" {
 		sb.WriteString("EXISTING SUMMARY — extend it. Keep every fact and id it records; do not restate or contradict earlier decisions.\n")
-		sb.WriteString("---\n")
-		sb.WriteString(prior)
-		sb.WriteString("\n---\n\n")
+		sb.WriteString(frameCompressorData(compressorPriorSummarySource, prior))
+		sb.WriteString("\n\n")
 	}
 
 	if len(artefacts) > 0 {
 		sb.WriteString("TOOL ARTEFACT INDEX (calls in the removed history; ids are authoritative):\n")
-		for _, line := range artefacts {
-			sb.WriteString(line)
-			sb.WriteString("\n")
-		}
-		sb.WriteString("\n")
+		sb.WriteString(frameCompressorData(compressorArtefactSource, strings.Join(artefacts, "\n")))
+		sb.WriteString("\n\n")
 	}
 
-	sb.WriteString("CONVERSATION TO SUMMARISE:\n---\n")
-	sb.WriteString(conversation.String())
-	sb.WriteString("---\n\nSUMMARY:")
+	if conversation.Len() > 0 {
+		sb.WriteString("CONVERSATION TO SUMMARISE:\n")
+		sb.WriteString(frameCompressorData(compressorTranscriptSource, conversation.String()))
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString("SUMMARY:")
 	return sb.String(), true
 }
 
