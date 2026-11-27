@@ -13294,7 +13294,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.104.1
+  version: 0.104.3
 paths:
   /.well-known/oauth-authorization-server:
     get:
