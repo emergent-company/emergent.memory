@@ -21,14 +21,14 @@ enum ObjectTypeAppearance {
     /// The gateway already normalizes most values; this keeps a raw schema value
     /// safe.
     private static func normalizeIconName(_ raw: String) -> String {
-        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        for prefix in ["lucide--", "lucide:", "lucide_", "tabler--", "tabler:", "tabler_"] {
-            if s.hasPrefix(prefix) {
-                s = String(s.dropFirst(prefix.count))
-                break
-            }
+        var name = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        for prefix in ["lucide--", "lucide:", "lucide_", "tabler--", "tabler:", "tabler_"]
+            where name.hasPrefix(prefix)
+        {
+            name = String(name.dropFirst(prefix.count))
+            break
         }
-        return s
+        return name
     }
 
     /// SF Symbols for the curated Tabler catalog used by schema.org-derived

@@ -49,6 +49,7 @@ var (
 
 	// catalog-install flags
 	blueprintsCatalogTypesFlag   []string
+	blueprintsCatalogExtendFlag  []string
 	blueprintsCatalogNameFlag    string
 	blueprintsCatalogVersionFlag string
 	blueprintsCatalogReplaceFlag bool
@@ -1073,12 +1074,20 @@ types reconciles and activates deferred relationships.
 
 Type names may be passed positionally or with repeated --type flags.
 
+A project keeps one type per name, so a catalog type whose name another pack
+already provides is refused: a project resolves one type per name from the
+newest install, so installing it would replace that pack's definition with the
+catalog's and move the type to the catalog pack. The error names the conflicting
+types and their packs; pass those names with --extend to accept that deliberately
+(only the named types are taken over, nothing else).
+
 Examples:
 
   memory blueprints catalog-install Movie Person
   memory blueprints catalog-install --type Movie --type Person
   memory blueprints catalog-install Product Offer Brand
   memory blueprints catalog-install Movie --name my-catalog --project my-project
+  memory blueprints catalog-install Organization --extend Organization
   memory blueprints catalog-install Movie --replace   # remove other catalog types`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runBlueprintsCatalogInstall,
@@ -1091,6 +1100,7 @@ type catalogInstallResult struct {
 	Relationships []string `json:"relationships"`
 	Deferred      []string `json:"deferred"`
 	Removed       []string `json:"removed"`
+	Merged        []string `json:"merged"`
 	Unknown       []string `json:"unknown"`
 	Problems      []string `json:"problems"`
 }
@@ -1112,17 +1122,21 @@ func runBlueprintsCatalogInstall(cmd *cobra.Command, args []string) error {
 	}
 	c.SetContext("", projectID)
 
-	body, err := json.Marshal(map[string]any{
+	body := map[string]any{
 		"types":   types,
 		"name":    blueprintsCatalogNameFlag,
 		"version": blueprintsCatalogVersionFlag,
 		"replace": blueprintsCatalogReplaceFlag,
-	})
+	}
+	if len(blueprintsCatalogExtendFlag) > 0 {
+		body["extend"] = blueprintsCatalogExtendFlag
+	}
+	raw, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
 
-	data, err := blueprintRequest(c, http.MethodPost, c.BaseURL()+"/api/blueprints/catalog/install", body)
+	data, err := blueprintRequest(c, http.MethodPost, c.BaseURL()+"/api/blueprints/catalog/install", raw)
 	if err != nil {
 		return err
 	}
@@ -1144,6 +1158,9 @@ func runBlueprintsCatalogInstall(cmd *cobra.Command, args []string) error {
 	}
 	if len(res.Removed) > 0 {
 		fmt.Fprintf(out, "Removed (%d, relationships to these deactivated): %s\n", len(res.Removed), strings.Join(res.Removed, ", "))
+	}
+	if len(res.Merged) > 0 {
+		_, _ = fmt.Fprintf(out, "Taken over from another pack (the catalog's definition is now live and the catalog pack owns them): %s\n", strings.Join(res.Merged, ", "))
 	}
 	if len(res.Deferred) > 0 {
 		fmt.Fprintf(out, "Deferred (%d, install the missing endpoint to activate): %s\n", len(res.Deferred), strings.Join(res.Deferred, ", "))
@@ -1376,6 +1393,7 @@ func init() {
 
 	// catalog-install flags
 	blueprintsCatalogInstallCmd.Flags().StringArrayVar(&blueprintsCatalogTypesFlag, "type", nil, "Catalog type to install (repeatable, e.g. --type Movie)")
+	blueprintsCatalogInstallCmd.Flags().StringArrayVar(&blueprintsCatalogExtendFlag, "extend", nil, "Requested type to install under the catalog's definition even though another pack provides the name (repeatable; refused without it, and the catalog pack then owns the named types)")
 	blueprintsCatalogInstallCmd.Flags().StringVar(&blueprintsCatalogNameFlag, "name", "", "Project schema pack name (default schemaorg-catalog)")
 	blueprintsCatalogInstallCmd.Flags().StringVar(&blueprintsCatalogVersionFlag, "version", "", "Project schema pack version (default 1.0.0)")
 	blueprintsCatalogInstallCmd.Flags().BoolVar(&blueprintsCatalogReplaceFlag, "replace", false, "Make the named types authoritative; remove catalog types not listed (deactivates their relationships)")

@@ -65,6 +65,57 @@ func TestDescribeCatalogInstall(t *testing.T) {
 	require.Equal(t, []string{"bad edge"}, res.Problems)
 }
 
+func TestCatalogTypeConflicts(t *testing.T) {
+	catalogTypes := map[string]bool{"Person": true, "Event": true, "Movie": true}
+	compiled := &schemas.CompiledTypesResponse{
+		ObjectTypes: []schemas.ObjectTypeSchema{
+			{Name: "Person", SchemaName: "personal-memory"},
+			{Name: "Event", SchemaName: "personal-memory"},
+			// A losing declaration must not decide the owner: the unshadowed row
+			// is the definition the project resolves.
+			{Name: "Event", SchemaName: "schemaorg-catalog", Shadowed: true},
+			{Name: "Movie", SchemaName: "schemaorg-catalog"},
+		},
+	}
+
+	// Person and Event are provided by personal-memory; Movie is ours; a name
+	// outside the catalog is catalog.Project's problem, not a conflict.
+	got := catalogTypeConflicts(compiled, catalogTypes, []string{"Person", "Event", "Movie", "NotACatalogType"}, "schemaorg-catalog", nil)
+	require.Equal(t, []CatalogTypeConflict{
+		{Name: "Person", OwnerPack: "personal-memory"},
+		{Name: "Event", OwnerPack: "personal-memory"},
+	}, got)
+
+	// Accepting the merge removes exactly the accepted name.
+	got = catalogTypeConflicts(compiled, catalogTypes, []string{"Person", "Event", "Movie"}, "schemaorg-catalog", map[string]bool{"Person": true})
+	require.Equal(t, []CatalogTypeConflict{{Name: "Event", OwnerPack: "personal-memory"}}, got)
+
+	// A type the catalog pack already owns is a reconcile, not a conflict: the
+	// additive re-run path names the same types again.
+	require.Nil(t, catalogTypeConflicts(compiled, catalogTypes, []string{"Movie"}, "schemaorg-catalog", nil))
+
+	require.Nil(t, catalogTypeConflicts(nil, catalogTypes, []string{"Person"}, "schemaorg-catalog", nil))
+}
+
+func TestCatalogExtendUnknown(t *testing.T) {
+	require.Equal(t, []string{"Nope"}, catalogExtendUnknown([]string{"Person", "Nope"}, []string{"Person"}))
+	require.Nil(t, catalogExtendUnknown([]string{"Person"}, []string{"Person"}))
+	require.Nil(t, catalogExtendUnknown(nil, []string{"Person"}))
+}
+
+func TestCatalogConflictMessageNamesTheOwnerAndTheEscapeHatch(t *testing.T) {
+	msg := catalogConflictMessage([]CatalogTypeConflict{
+		{Name: "Organization", OwnerPack: "personal-memory"},
+		{Name: "Person", OwnerPack: "personal-memory"},
+	})
+	require.Contains(t, msg, "Organization (already provided by pack \"personal-memory\")")
+	require.Contains(t, msg, "Person (already provided by pack \"personal-memory\")")
+	// The consequence is a takeover of the name, not a property merge: the
+	// compiled view resolves a type from the newest install.
+	require.Contains(t, msg, "replace that pack's definition with the catalog's")
+	require.Contains(t, msg, `"extend"`)
+}
+
 func TestCatalogPackConflict(t *testing.T) {
 	catalogTypes := map[string]bool{"Movie": true, "Person": true}
 	_, ok := catalogPackConflict(catalogTypes, []string{"Movie", "Person"})

@@ -600,11 +600,12 @@ func (h *MCPBlueprintToolHandler) ExecuteBlueprintCatalogInstall(ctx context.Con
 	name, _ := args["name"].(string)
 	version, _ := args["version"].(string)
 	replace, _ := args["replace"].(bool)
+	extend := stringListArg(args["extend"])
 
 	res, err := h.svc.InstallCatalog(ctx, projectID, "", types, CatalogPackOptions{
 		Name:    name,
 		Version: version,
-	}, replace)
+	}, replace, extend)
 	if err != nil {
 		return errResult("failed to install catalog types: " + err.Error())
 	}

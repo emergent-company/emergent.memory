@@ -36,8 +36,21 @@ type SessionCompaction struct {
 	Summary        string    `bun:"summary,notnull" json:"summary"`
 	SummaryTokens  int       `bun:"summary_tokens,notnull,default:0" json:"summaryTokens"`
 	Model          string    `bun:"model,notnull,default:''" json:"model"`
+	Trigger        string    `bun:"trigger,notnull,default:'load'" json:"trigger"`
 	CreatedAt      time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 }
+
+// Compaction triggers. A row records which path rebuilt the session so the two
+// callers can be told apart in operator forensics.
+const (
+	// CompactionTriggerLoad is the pre-run path: the history in a resumed
+	// session is trimmed (and optionally compressed) before the run starts.
+	CompactionTriggerLoad = "load"
+	// CompactionTriggerOverflow is the reactive path: a model call failed with
+	// a context-window rejection mid-run, the oldest history was summarised,
+	// and the step was retried once (#1138).
+	CompactionTriggerOverflow = "overflow"
+)
 
 // RecordSessionCompaction appends one compression record, assigning the next
 // seq for the session. It is nil-receiver safe and returns an error the caller
@@ -46,6 +59,9 @@ type SessionCompaction struct {
 func (r *Repository) RecordSessionCompaction(ctx context.Context, row *SessionCompaction) error {
 	if r == nil || row == nil || row.SessionID == "" {
 		return nil
+	}
+	if row.Trigger == "" {
+		row.Trigger = CompactionTriggerLoad
 	}
 	return r.db.RunInTx(ctx, &sql.TxOptions{}, func(ctx context.Context, tx bun.Tx) error {
 		var maxSeq int

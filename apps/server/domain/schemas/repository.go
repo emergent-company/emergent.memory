@@ -1258,8 +1258,9 @@ func samePackScope(ownerProjectID *string, incomingSource *string) bool {
 // The registry follows one precedence rule, shared with the compiled-types view
 // and graph validation: the newest install defines a type. Re-assigning an
 // installed pack is idempotent and refreshes the types it owns (an upgrade);
-// types owned by another pack are skipped unless req.Merge is set, in which case
-// they are additively merged and the incoming pack becomes the owner.
+// types owned by another pack are skipped unless req.Merge (every type) or
+// req.MergeTypes (the named ones) asks for them, in which case they are
+// additively merged and the incoming pack becomes the owner.
 func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID string, req *AssignPackRequest) (*AssignPackResult, error) {
 	// Get the full schema
 	var pack GraphMemorySchema
@@ -1385,6 +1386,14 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 	// Pre-compute per-type actions: install / skip / merge / replace
 	var actions []typeAction
 
+	// MergeTypes is the per-type form of Merge: a caller that must not merge
+	// every same-named type (catalog install) names only the collisions it
+	// accepted. Merge=true still covers every type.
+	mergeTypes := make(map[string]bool, len(req.MergeTypes))
+	for _, n := range req.MergeTypes {
+		mergeTypes[n] = true
+	}
+
 	for typeName, incomingSchema := range objectTypeSchemas {
 		// Read the existing registry entry and the pack that owns it (schema_id
 		// -> graph_schemas). Ownership — and therefore the replace/skip decision
@@ -1449,11 +1458,11 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 			ConflictingProperties: propConflicts,
 			AddedProperties:       added,
 		}
-		if mergeErr == nil && (req.Merge || req.DryRun) {
+		if mergeErr == nil && (req.Merge || mergeTypes[typeName] || req.DryRun) {
 			conflict.MergedSchema = merged
 		}
 
-		if req.Merge {
+		if req.Merge || mergeTypes[typeName] {
 			actions = append(actions, typeAction{
 				name:           typeName,
 				incomingSchema: incomingSchema,

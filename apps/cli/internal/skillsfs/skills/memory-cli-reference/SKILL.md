@@ -1884,12 +1884,20 @@ types reconciles and activates deferred relationships.
 
 Type names may be passed positionally or with repeated --type flags.
 
+A project keeps one type per name, so a catalog type whose name another pack
+already provides is refused: a project resolves one type per name from the
+newest install, so installing it would replace that pack's definition with the
+catalog's and move the type to the catalog pack. The error names the conflicting
+types and their packs; pass those names with --extend to accept that deliberately
+(only the named types are taken over, nothing else).
+
 Examples:
 
   memory blueprints catalog-install Movie Person
   memory blueprints catalog-install --type Movie --type Person
   memory blueprints catalog-install Product Offer Brand
   memory blueprints catalog-install Movie --name my-catalog --project my-project
+  memory blueprints catalog-install Organization --extend Organization
   memory blueprints catalog-install Movie --replace   # remove other catalog types
 
 ```
@@ -1899,11 +1907,12 @@ memory blueprints catalog-install [type ...] [flags]
 ### Options
 
 ```
-  -h, --help               help for catalog-install
-      --name string        Project schema pack name (default schemaorg-catalog)
-      --replace            Make the named types authoritative; remove catalog types not listed (deactivates their relationships)
-      --type stringArray   Catalog type to install (repeatable, e.g. --type Movie)
-      --version string     Project schema pack version (default 1.0.0)
+      --extend stringArray   Requested type to install under the catalog's definition even though another pack provides the name (repeatable; refused without it, and the catalog pack then owns the named types)
+  -h, --help                 help for catalog-install
+      --name string          Project schema pack name (default schemaorg-catalog)
+      --replace              Make the named types authoritative; remove catalog types not listed (deactivates their relationships)
+      --type stringArray     Catalog type to install (repeatable, e.g. --type Movie)
+      --version string       Project schema pack version (default 1.0.0)
 ```
 
 ## memory blueprints catalog-resolve

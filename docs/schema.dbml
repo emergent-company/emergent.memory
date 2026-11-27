@@ -553,6 +553,7 @@ Table "kb"."agent_session_compactions" {
   "summary_tokens" integer [not null, default: 0]
   "model" text [not null, default: '']
   "created_at" timestamptz [not null, default: `now()`]
+  "trigger" text [not null, default: 'load']
 
   Indexes {
     (session_id, seq) [name: "uq_agent_session_compactions_session_seq", unique]

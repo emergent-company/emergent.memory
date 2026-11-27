@@ -4411,7 +4411,7 @@ func (ae *AgentExecutor) runPipeline(
 					// near the limit, not just a precautionary trim).
 					if trimmed && numKeep < n/2 {
 						dropped, retained := partitionForCompaction(events, numKeep)
-						compressed, compErr := ae.compressSession(ctx, dropped, retained, sessionID, contextWindow, modelName)
+						compressed, compErr := ae.compressSession(ctx, dropped, retained, sessionID, contextWindow, modelName, CompactionTriggerLoad)
 						if compErr != nil {
 							ae.log.Warn("session compression failed, proceeding with trimmed session",
 								slog.String("session_id", sessionID), logger.Error(compErr))
@@ -4430,7 +4430,7 @@ func (ae *AgentExecutor) runPipeline(
 				n := events.Len()
 				if n > largeSessionThreshold {
 					dropped, retained := partitionForCompaction(events, n/2)
-					compressed, compErr := ae.compressSession(ctx, dropped, retained, sessionID, 0, modelName)
+					compressed, compErr := ae.compressSession(ctx, dropped, retained, sessionID, 0, modelName, CompactionTriggerLoad)
 					if compErr != nil {
 						ae.log.Warn("session compression (no context window) failed, proceeding",
 							slog.String("session_id", sessionID), logger.Error(compErr))
@@ -4521,11 +4521,16 @@ func (ae *AgentExecutor) runPipeline(
 	malformedCount := 0
 	unknownToolCount := 0
 	transientErrCount := 0
+	// At most one reactive compaction per run (#1138): if the retried model
+	// call overflows again, the run fails with the original error rather than
+	// compacting in a loop.
+	reactiveCompactionDone := false
 	currentContent := userContent
 	for {
 		malformed := false
 		unknownTool := false
 		transientErr := false
+		reactiveRetry := false
 		for event, eventErr := range r.Run(ctx, "system", sess.ID(), currentContent, runCfg) {
 			if eventErr != nil {
 				// A cancelled run context — per-step watchdog, doom loop, or an
@@ -4538,6 +4543,35 @@ func (ae *AgentExecutor) runPipeline(
 				}
 				steps := tracker.current()
 				errStr := eventErr.Error()
+
+				// Mid-run context overflow (#1138): a single long run can grow
+				// past the model's context window after the load path already
+				// ran. Summarise the oldest history with the same partition +
+				// compressor the load path uses, then retry the step once.
+				//
+				// The user turn is already persisted (the runner appends it
+				// before the model call), so the retry passes nil content to
+				// avoid duplicating it.
+				if !reactiveCompactionDone && adk.IsContextOverflow(eventErr) {
+					reactiveCompactionDone = true
+					ae.log.Warn("agent run hit the model context window, compacting session and retrying once",
+						slog.String("run_id", run.ID),
+						slog.String("session_id", sessionID),
+						slog.String("model", modelName),
+						slog.Int("steps", steps),
+						slog.String("error", errStr),
+					)
+					if ae.reactiveCompactSession(ctx, sessionID, modelName) {
+						currentContent = nil
+						reactiveRetry = true
+						break
+					}
+					ae.log.Error("reactive session compaction failed, failing run with the original error",
+						slog.String("run_id", run.ID),
+						slog.String("session_id", sessionID),
+						slog.String("error", errStr),
+					)
+				}
 
 				// RESOURCE_EXHAUSTED / spending cap: treat as permanent after 1 retry.
 				// On first occurrence, log and retry once (5s sleep). On second, disable
@@ -4881,7 +4915,7 @@ func (ae *AgentExecutor) runPipeline(
 			break
 		}
 
-		if !malformed && !transientErr && !unknownTool {
+		if !malformed && !transientErr && !unknownTool && !reactiveRetry {
 			// One bounded A2UI repair pass (#417): an answer that was only an
 			// invalid card would otherwise degrade silently, so send the
 			// validator issues back exactly once before accepting the fallback.
