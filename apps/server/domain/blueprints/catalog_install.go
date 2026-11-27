@@ -27,16 +27,17 @@ type CatalogInstallResult struct {
 	Relationships []string `json:"relationships"`
 	Deferred      []string `json:"deferred"`
 	Removed       []string `json:"removed,omitempty"`
-	// Merged are the requested types whose catalog properties were added to a
-	// type another pack owns because the caller named them in Extend.
+	// Merged are the requested types the caller named in Extend, which the
+	// catalog pack now owns: its declaration became the live definition and the
+	// property definitions both packs declare were merged additively.
 	Merged   []string `json:"merged,omitempty"`
 	Unknown  []string `json:"unknown,omitempty"`
 	Problems []string `json:"problems,omitempty"`
 }
 
-// CatalogTypeConflict names a requested catalog type whose name is already
-// provided by a different pack, so installing it would merge into that pack's
-// type rather than install a catalog-owned one.
+// CatalogTypeConflict names a requested catalog type whose name another pack
+// already provides, so installing it would replace that pack's live definition
+// with the catalog's and take the type over, not install a second one.
 type CatalogTypeConflict struct {
 	Name      string `json:"name"`
 	OwnerPack string `json:"ownerPack"`
@@ -103,8 +104,9 @@ func (s *Service) InstallCatalog(ctx context.Context, projectID, userID string, 
 	}
 
 	// A name that another pack provides is the same type, not a second one, so
-	// the catalog's definition would merge into it. Refuse unless the caller
-	// named it in extend; nothing about that merge is implicit.
+	// installing it would take the name over: the catalog's declaration becomes
+	// the live definition and the catalog pack owns it. Refuse unless the caller
+	// named it in extend; nothing about that takeover is implicit.
 	extendSet := make(map[string]bool, len(extend))
 	for _, name := range extend {
 		extendSet[name] = true
@@ -218,7 +220,7 @@ func catalogTypeOwners(compiled *schemas.CompiledTypesResponse) map[string]strin
 }
 
 // catalogTypeConflicts reports the requested catalog types whose name another
-// pack already provides and whose merge the caller did not accept via extend.
+// pack already provides and whose takeover the caller did not accept via extend.
 func catalogTypeConflicts(compiled *schemas.CompiledTypesResponse, catalogTypes map[string]bool, requested []string, packName string, extend map[string]bool) []CatalogTypeConflict {
 	owners := catalogTypeOwners(compiled)
 	var out []CatalogTypeConflict
@@ -226,7 +228,7 @@ func catalogTypeConflicts(compiled *schemas.CompiledTypesResponse, catalogTypes 
 	for _, name := range requested {
 		if seen[name] || extend[name] || !catalogTypes[name] {
 			// Unknown names are reported by catalog.Project; a name the caller
-			// accepted is merged on purpose.
+			// accepted is taken over on purpose.
 			continue
 		}
 		seen[name] = true
