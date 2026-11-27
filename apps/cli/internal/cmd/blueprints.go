@@ -1157,19 +1157,19 @@ func runBlueprintsCatalogInstall(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintf(out, "Active relationships (%d): %s\n", len(res.Relationships), strings.Join(res.Relationships, ", "))
 	}
 	if len(res.Removed) > 0 {
-		fmt.Fprintf(out, "Removed (%d, relationships to these deactivated): %s\n", len(res.Removed), strings.Join(res.Removed, ", "))
+		_, _ = fmt.Fprintf(out, "Removed (%d, relationships to these deactivated): %s\n", len(res.Removed), strings.Join(res.Removed, ", "))
 	}
 	if len(res.Merged) > 0 {
 		_, _ = fmt.Fprintf(out, "Taken over from another pack (the catalog's definition is now live and the catalog pack owns them): %s\n", strings.Join(res.Merged, ", "))
 	}
 	if len(res.Deferred) > 0 {
-		fmt.Fprintf(out, "Deferred (%d, install the missing endpoint to activate): %s\n", len(res.Deferred), strings.Join(res.Deferred, ", "))
+		_, _ = fmt.Fprintf(out, "Deferred (%d, install the missing endpoint to activate): %s\n", len(res.Deferred), strings.Join(res.Deferred, ", "))
 	}
 	if len(res.Unknown) > 0 {
-		fmt.Fprintf(out, "Unknown types (not in catalog): %s\n", strings.Join(res.Unknown, ", "))
+		_, _ = fmt.Fprintf(out, "Unknown types (not in catalog): %s\n", strings.Join(res.Unknown, ", "))
 	}
 	if len(res.Problems) > 0 {
-		fmt.Fprintf(out, "Catalog problems: %s\n", strings.Join(res.Problems, "; "))
+		_, _ = fmt.Fprintf(out, "Catalog problems: %s\n", strings.Join(res.Problems, "; "))
 	}
 	return nil
 }
@@ -1236,18 +1236,18 @@ func runBlueprintsCatalogResolve(cmd *cobra.Command, args []string) error {
 
 	out := cmd.OutOrStdout()
 	if len(matches) == 0 {
-		fmt.Fprintf(out, "No catalog types matched %q.\n", query)
+		_, _ = fmt.Fprintf(out, "No catalog types matched %q.\n", query)
 		return nil
 	}
-	fmt.Fprintf(out, "Catalog matches for %q:\n", query)
+	_, _ = fmt.Fprintf(out, "Catalog matches for %q:\n", query)
 	for i, m := range matches {
 		detail := m.Category
 		if m.Parent != "" {
 			detail += ", parent " + m.Parent
 		}
-		fmt.Fprintf(out, "  %2d. %-22s %.3f  (%s)", i+1, m.Name, m.Score, detail)
+		_, _ = fmt.Fprintf(out, "  %2d. %-22s %.3f  (%s)", i+1, m.Name, m.Score, detail)
 		if len(m.Matched) > 0 {
-			fmt.Fprintf(out, "  [%s]", strings.Join(m.Matched, ","))
+			_, _ = fmt.Fprintf(out, "  [%s]", strings.Join(m.Matched, ","))
 		}
 		_, _ = fmt.Fprintln(out)
 	}
@@ -1321,18 +1321,18 @@ func runBlueprintsCatalogShow(cmd *cobra.Command, args []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "%s (%s)\n", d.Type.Name, d.Type.Label)
+	_, _ = fmt.Fprintf(out, "%s (%s)\n", d.Type.Name, d.Type.Label)
 	if d.Type.Category != "" {
-		fmt.Fprintf(out, "Category: %s\n", d.Type.Category)
+		_, _ = fmt.Fprintf(out, "Category: %s\n", d.Type.Category)
 	}
 	if len(d.Ancestors) > 0 {
-		fmt.Fprintf(out, "Ancestors: %s\n", strings.Join(d.Ancestors, " > "))
+		_, _ = fmt.Fprintf(out, "Ancestors: %s\n", strings.Join(d.Ancestors, " > "))
 	}
 	if len(d.Children) > 0 {
-		fmt.Fprintf(out, "Subtypes: %s\n", strings.Join(d.Children, ", "))
+		_, _ = fmt.Fprintf(out, "Subtypes: %s\n", strings.Join(d.Children, ", "))
 	}
 	if len(d.Type.Labels) > 0 {
-		fmt.Fprintf(out, "Aliases: %s\n", strings.Join(d.Type.Labels, ", "))
+		_, _ = fmt.Fprintf(out, "Aliases: %s\n", strings.Join(d.Type.Labels, ", "))
 	}
 	if len(d.Type.Properties) > 0 {
 		keys := make([]string, 0, len(d.Type.Properties))
@@ -1340,12 +1340,12 @@ func runBlueprintsCatalogShow(cmd *cobra.Command, args []string) error {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
-		fmt.Fprintf(out, "Properties (%d): %s\n", len(keys), strings.Join(keys, ", "))
+		_, _ = fmt.Fprintf(out, "Properties (%d): %s\n", len(keys), strings.Join(keys, ", "))
 	}
 	if len(d.RelatedRelationships) > 0 {
-		fmt.Fprintf(out, "Relationships (%d):\n", len(d.RelatedRelationships))
+		_, _ = fmt.Fprintf(out, "Relationships (%d):\n", len(d.RelatedRelationships))
 		for _, r := range d.RelatedRelationships {
-			fmt.Fprintf(out, "  - %s: %s -> %s\n", r.Name, r.SourceType, r.TargetType)
+			_, _ = fmt.Fprintf(out, "  - %s: %s -> %s\n", r.Name, r.SourceType, r.TargetType)
 		}
 	}
 	return nil
