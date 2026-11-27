@@ -343,7 +343,7 @@ func TestStreamableToolsListAppliesInstanceAllowlist(t *testing.T) {
 		AllowedTools: []string{"entity-search"},
 	}
 	h := NewStreamableHTTPHandler(&Service{shareInstances: store, shareTokens: &fakeTokenSvc{}, agentDir: &fakeAgentDir{}}, slog.Default())
-	session := &MCPSession{ID: "s1", ProjectID: "proj-1", Scopes: []string{"data:read"}, Initialized: true}
+	session := &MCPSession{ID: "s1", ProjectID: "proj-1", Initialized: true}
 	user := &auth.AuthUser{ID: "u", ProjectID: "proj-1", APITokenID: "tok-1", Scopes: []string{"data:read"}}
 
 	e := echo.New()
@@ -364,7 +364,7 @@ func TestStreamableToolsCallRejectsNonAllowlisted(t *testing.T) {
 		AllowedTools: []string{"entity-search"},
 	}
 	h := NewStreamableHTTPHandler(&Service{shareInstances: store, shareTokens: &fakeTokenSvc{}, agentDir: &fakeAgentDir{}}, slog.Default())
-	session := &MCPSession{ID: "s1", ProjectID: "proj-1", Scopes: []string{"schema:read"}, Initialized: true}
+	session := &MCPSession{ID: "s1", ProjectID: "proj-1", Initialized: true}
 	user := &auth.AuthUser{ID: "u", ProjectID: "proj-1", APITokenID: "tok-1", Scopes: []string{"schema:read"}}
 	params, _ := json.Marshal(ToolsCallParams{Name: "schema-list"})
 
