@@ -15,9 +15,21 @@
 
 pre-commit:
   parallel: true
+  # jobs tagged `sandbox` are the subset a coding agent's workspace runs on
+  # every commit. The workspace is a fresh clone in an image that ships go,
+  # gofmt, git, grep and gitleaks — no templ, golangci-lint, ruff or swiftlint,
+  # and a full-tree `go vet`/`go build` is minutes on a cold clone inside a git
+  # operation's time budget. So the provisioner installs a pre-commit hook that
+  # runs `lefthook run pre-commit --tag sandbox` (see
+  # apps/server/domain/sandbox/checkout.go): cheap structural checks that catch
+  # what actually reached CI as a red PR (#1164 gofmt, #1166 lint ratchet).
+  # Everything else stays a developer-machine and CI concern. Tag a job here
+  # only if the workspace image can run it — an untagged job that fails on a
+  # missing binary blocks every agent commit instead of catching a mistake.
   jobs:
     # ── Server — apps/server ─────────────────────────────────────────────────
     - name: server-gofmt
+      tags: [sandbox]
       root: apps/server
       glob: "**/*.go"
       run: |
@@ -39,11 +51,13 @@ pre-commit:
       run: go build ./...
 
     - name: server-lint-ratchet
+      tags: [sandbox]
       root: apps/server
       glob: "**/*.go"
       run: ./scripts/lint-ratchet.sh
 
     - name: server-swagger-annotations
+      tags: [sandbox]
       root: apps/server
       glob: "**/handler*.go"
       exclude:
@@ -69,6 +83,7 @@ pre-commit:
       run: golangci-lint config verify
 
     - name: server-untracked-imports
+      tags: [sandbox]
       glob:
         - "apps/server/*.go"
         - "apps/server/**/*.go"
@@ -155,6 +170,7 @@ pre-commit:
 
     # ── CLI — apps/cli ───────────────────────────────────────────────────────
     - name: cli-gofmt
+      tags: [sandbox]
       root: apps/cli
       glob: "**/*.go"
       run: |
@@ -193,6 +209,7 @@ pre-commit:
         ruff check {staged_files}
 
     - name: webui-gofmt
+      tags: [sandbox]
       root: apps/web-ui/gateway
       glob: "**/*.go"
       run: |
@@ -270,6 +287,7 @@ pre-commit:
       run: bash ../../../scripts/preflight/ui-guard.sh
 
     - name: secrets
+      tags: [sandbox]
       run: |
         if ! command -v gitleaks >/dev/null 2>&1; then
           if [ "${GITLEAKS_OPTIONAL:-0}" = "1" ]; then
@@ -286,6 +304,7 @@ pre-commit:
     # only when an env file is staged; CI runs it unconditionally via
     # scripts/preflight/all.sh.
     - name: preflight-gitleaks-env-files
+      tags: [sandbox]
       glob:
         - ".env"
         - ".env.*"
@@ -296,6 +315,7 @@ pre-commit:
       run: bash scripts/preflight/gitleaks-env-files.sh
 
     - name: webui-no-generated
+      tags: [sandbox]
       run: |
         # Scope to apps/web-ui: only that tree gitignores its templ output, the
         # compiled Tailwind CSS and the generated gallery data. Other trees track
@@ -312,6 +332,7 @@ pre-commit:
 
     # ── Linux connector — apps/connector.linux ───────────────────────────────
     - name: connector-gofmt
+      tags: [sandbox]
       root: apps/connector.linux
       glob: "**/*.go"
       run: |
