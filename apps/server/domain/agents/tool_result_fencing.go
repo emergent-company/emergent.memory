@@ -54,13 +54,22 @@ const (
 // untrustedDelimiterPattern matches the sequences a payload could use to break
 // out of the envelope or impersonate the harness: the envelope's own tags, a
 // system-message tag, a chat control token (<|im_start|>, <|endoftext|>, …), the
-// decimal/hex entity-encoded forms of the envelope and system tags, and the
-// bracket role markers an instruction-tuned open-weight model honours ([INST],
-// <<SYS>>). The bracket set is covered because the fence cannot know the target
-// model: this runtime reaches several providers through LiteLLM, and a provider
-// that re-renders the conversation through a chat template would otherwise read a
-// payload's [INST] as harness control syntax rather than as text.
-var untrustedDelimiterPattern = regexp.MustCompile(`(?i)&(?:lt;|#0*60;|#[xX]0*3[cC];)(/?untrusted-content|/?system\b)|<(/?untrusted-content|/?system\b|\|[a-z0-9_]{1,32}\|>)|\[\/?INST\]|<<\/?SYS>>`)
+// decimal/hex entity-encoded forms of the envelope, system tags and chat tokens,
+// and the bracket role markers an instruction-tuned open-weight model honours
+// ([INST], <<SYS>>). The bracket set is covered because the fence cannot know the
+// target model: this runtime reaches several providers through LiteLLM, and a
+// provider that re-renders the conversation through a chat template would otherwise
+// read a payload's [INST] as harness control syntax rather than as text.
+//
+// The entity arm covers chat tokens too: "&lt;|im_start|&gt;" and its numeric
+// forms would otherwise survive unchanged and become a real control token in any
+// consumer that HTML-unescapes before rendering. Matching the leading entity is
+// enough, because defangUntrustedText escapes its "&": the "<" can never decode
+// back. The semicolon-less legacy form ("&#60|im_start|") is not matched — a bare
+// "&#60" is only an entity at a word boundary in HTML, and a terminator-less
+// alternation would also swallow the first digits of "&#600;". Token names may
+// contain digits (<|reserved_special_token_0|>), so the class does.
+var untrustedDelimiterPattern = regexp.MustCompile(`(?i)&(?:lt;|#0*60;|#[xX]0*3[cC];)(/?untrusted-content|/?system\b|\|[a-z0-9_]{1,32}\|)|<(/?(?:untrusted-content|system\b)|\|[a-z0-9_]{1,32}\|>)|\[\/?INST\]|<<\/?SYS>>`)
 
 // reservedPolicyKey is the top-level field the executor writes on a
 // reject/cancel tool response (confirmResponseBody). It is a reserved name: a
@@ -82,12 +91,22 @@ const reservedPolicyKey = "policy_decision"
 // result. convertToolResult applies it to every external MCP and relay result,
 // which is every path where third-party JSON becomes a tool response map; the
 // executor's own decision body is built directly and never passes through here.
-func scrubReservedPolicyKeys(m map[string]any) map[string]any {
+//
+// stripped reports whether a field was actually dropped. The caller logs that,
+// with the tool name, so the documented payload-fidelity cost is observable: an
+// integration that happens to return a "policy_decision" field would otherwise
+// lose it silently, and a future regression would look like a data bug in an
+// unrelated tool. The map is mutated in place, as before — the caller's map is
+// the decoded copy it owns.
+func scrubReservedPolicyKeys(m map[string]any) (scrubbed map[string]any, stripped bool) {
 	if m == nil {
-		return m
+		return m, false
+	}
+	if _, ok := m[reservedPolicyKey]; !ok {
+		return m, false
 	}
 	delete(m, reservedPolicyKey)
-	return m
+	return m, true
 }
 
 // externalContentBuiltinTools are tools in the internal catalog whose payload is

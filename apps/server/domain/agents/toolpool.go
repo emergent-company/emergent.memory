@@ -816,7 +816,7 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 					}
 					return map[string]any{"error": apperror.PublicMessage(err)}, nil
 				}
-				return convertRelayResponse(result)
+				return convertRelayResponseNamed(toolName, result)
 			},
 		)
 	}
@@ -836,7 +836,7 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 				if err != nil {
 					return map[string]any{"error": apperror.PublicMessage(err)}, nil
 				}
-				return convertToolResult(result)
+				return convertToolResultNamed(toolName, result)
 			},
 		)
 	}
@@ -863,7 +863,7 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 			if err != nil {
 				return map[string]any{"error": apperror.PublicMessage(err)}, nil
 			}
-			return convertToolResult(result)
+			return convertToolResultNamed(toolName, result)
 		},
 	)
 }
@@ -878,11 +878,29 @@ func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (too
 // bypass (see tool_result_fencing.go). The cost is payload fidelity: a tool that
 // returns a field with that name loses it, here and in the persisted row.
 func convertToolResult(result *mcp.ToolResult) (map[string]any, error) {
+	return convertToolResultNamed("", result)
+}
+
+// convertToolResultNamed is convertToolResult with the name the caller knows, so
+// a reserved-key strip is logged against the tool that returned it. Every
+// production site passes its tool name; the name-less wrapper exists for tests
+// and for callers that only have a ToolResult.
+func convertToolResultNamed(toolName string, result *mcp.ToolResult) (map[string]any, error) {
 	m, err := convertToolResultRaw(result)
 	if err != nil {
 		return m, err
 	}
-	return scrubReservedPolicyKeys(m), nil
+	m, stripped := scrubReservedPolicyKeys(m)
+	if stripped {
+		// Debug, not warn: dropping the key is the documented, correct
+		// behaviour. The line still matters, because the payload is altered and
+		// the tool name is the only way to tell "the tool stopped returning this
+		// field" from "the harness ate it".
+		slog.Debug("tool result carried the reserved policy key; dropped it",
+			slog.String("tool", toolName),
+			slog.String("key", reservedPolicyKey))
+	}
+	return m, nil
 }
 
 func convertToolResultRaw(result *mcp.ToolResult) (map[string]any, error) {
@@ -968,7 +986,7 @@ func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, ar
 			}
 			return map[string]any{"error": apperror.PublicMessage(err)}, nil
 		}
-		return convertRelayResponse(result)
+		return convertRelayResponseNamed(toolName, result)
 	}
 
 	isBuiltin := cache.builtinTools[toolName]
@@ -979,7 +997,7 @@ func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, ar
 		if err != nil {
 			return map[string]any{"error": apperror.PublicMessage(err)}, nil
 		}
-		return convertToolResult(result)
+		return convertToolResultNamed(toolName, result)
 	}
 
 	// Builtin tool
@@ -990,7 +1008,7 @@ func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, ar
 	if err != nil {
 		return map[string]any{"error": apperror.PublicMessage(err)}, nil
 	}
-	return convertToolResult(result)
+	return convertToolResultNamed(toolName, result)
 }
 
 // StripOperatorTools removes superadmin-only operator tools from a resolved tool
@@ -1164,7 +1182,7 @@ func (tp *ToolPool) wrapHiddenBuiltin(projectID, name, description string, schem
 			if err != nil {
 				return map[string]any{"error": apperror.PublicMessage(err)}, nil
 			}
-			return convertToolResult(result)
+			return convertToolResultNamed(name, result)
 		},
 	)
 	return t
@@ -1264,11 +1282,18 @@ func relayOutputSchemaDeclared(m map[string]any) bool {
 // failures surface as a Go error from CallTool (the connector sets
 // ResponseFrame.Error), so callers handle those before reaching here.
 func convertRelayResponse(response map[string]any) (map[string]any, error) {
+	return convertRelayResponseNamed("", response)
+}
+
+// convertRelayResponseNamed is convertRelayResponse with the relay tool name, so
+// the conversion is logged against the tool and the path stays on the same
+// ingestion choke point (see TestRelayResultCannotForgePolicyDecision).
+func convertRelayResponseNamed(toolName string, response map[string]any) (map[string]any, error) {
 	resultBytes, err := json.Marshal(response)
 	if err != nil {
 		return map[string]any{"error": "invalid relay tool result"}, nil
 	}
-	return convertToolResult(&mcp.ToolResult{
+	return convertToolResultNamed(toolName, &mcp.ToolResult{
 		Content: []mcp.ContentBlock{{Type: "text", Text: string(resultBytes)}},
 	})
 }
