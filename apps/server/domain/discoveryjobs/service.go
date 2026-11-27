@@ -1362,6 +1362,11 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 	// record why it was declined. Best-effort; never fails the completed job.
 	s.maybeAutoApply(ctx, projectID, jobID, schemaID, refinedTypes, registeredTypes)
 
+	// Auto-ingest (pipeline_mode=auto): extract any never-extracted documents so
+	// a new document whose types all already exist still reaches the graph even
+	// though auto-apply declines (no schema change → no backfill).
+	s.maybeAutoIngest(ctx, projectID)
+
 	s.log.Info("discovery job completed",
 		slog.String("job_id", jobID.String()),
 		slog.String("pack_id", schemaID.String()),
