@@ -76,7 +76,12 @@ fi
 # review gate and the scheduled watchdog call, with a fake `gh` on PATH: offline,
 # no credentials. They run here so the required `ci` job exercises them without
 # a workflow-file change.
-for suite in reconcile-release-tag.test.sh dispatch-release-tag.test.sh; do
+#
+# `review-gate.test.sh` is the third: it decides which comment arms, disarms or
+# is ignored by `github-review-gate.yml` (#1385). That logic used to live in a
+# `run:` block no test could reach, and the author filter in it was inverted for
+# rejections -- product #1036 merged 2m12s after a trusted `CHANGES_REQUESTED`.
+for suite in reconcile-release-tag.test.sh dispatch-release-tag.test.sh review-gate.test.sh; do
   echo "==> .github/scripts/$suite"
   if bash "$root/.github/scripts/$suite"; then
     echo "==> .github/scripts/$suite PASSED"

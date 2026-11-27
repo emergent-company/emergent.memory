@@ -9,10 +9,13 @@
 # for those -- so auto-tag never ran, v0.104.0's tag was never created, and the
 # nine-workflow fan-out never started. The tag had to be pushed by hand.
 #
-# Nothing observed that state: auto-tag has no `workflow_dispatch` trigger (its
-# only entry point is the push), check-release-fanout.py checks the manifest
+# Nothing observed that state: auto-tag had no `workflow_dispatch` trigger (its
+# only entry point was the push), check-release-fanout.py checks the manifest
 # against the workflows rather than that a merged bump produced a tag, and the
-# tag-triggered workflows cannot miss a tag they never hear about.
+# tag-triggered workflows cannot miss a tag they never hear about. `auto-tag.yml`
+# now declares `workflow_dispatch`, and `release-tag-watchdog.yml` plus
+# `github-review-gate.yml` both use it -- but a heal that runs later is still not
+# proof that this branch is released, so this guard stays the reporter.
 #
 # This is the observer that needs no workflow file. It runs in
 # scripts/preflight/all.sh, i.e. in the branch-protection-required `ci` job, on
@@ -105,7 +108,7 @@ echo "  workflow run for it, and the tag -- with the whole release fan-out -- ne
 echo "  happens (#1047; v0.104.0's tag had to be pushed by hand)." >&2
 echo "  Start the tag path explicitly:" >&2
 echo "    gh workflow run auto-tag.yml --repo <owner>/<repo> --ref ${branch}" >&2
-echo "  or, where that trigger does not exist yet, push the annotated tag yourself:" >&2
+echo "  or push the annotated tag yourself:" >&2
 echo "    git tag -a ${tag} ${tip_sha} -m '${tag}' && git push ${remote} refs/tags/${tag}" >&2
 echo "  A bump that must not be tagged carries '${marker}' in its commit message." >&2
 exit 1
