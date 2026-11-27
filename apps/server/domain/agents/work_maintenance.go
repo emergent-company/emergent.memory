@@ -615,7 +615,7 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead, 
 			// not a failed item: clear the park and dispatch a fresh run that
 			// continues from the repository/PR state. Bounded, because a repeat
 			// exhaustion is a signal for a human (issue #993 follow-up).
-			exhaustions, ok := rc.resumeStepLimitPark(ctx, h)
+			exhaustions, ok := rc.resumeStepLimitPark(ctx, h, block)
 			if !ok {
 				return
 			}
@@ -723,6 +723,18 @@ func isStepLimitBlock(block *WorkBlock) bool {
 	return block != nil && block.FailureClass != nil && *block.FailureClass == string(FailureClassStepLimit)
 }
 
+// stepLimitExhaustedBlockedBy marks a step-limit block whose automatic-resume
+// budget is spent. It is a terminal state: one escalation task is open and the
+// item waits for a human unblock or retry.
+const stepLimitExhaustedBlockedBy = "step-limit-exhausted"
+
+// blockIsStepLimitEscalated reports whether the step-limit park has already
+// been escalated, so the reconciler stops counting exhaustions (and stops
+// re-notifying) on every pass.
+func blockIsStepLimitEscalated(block *WorkBlock) bool {
+	return block != nil && block.BlockedBy != nil && *block.BlockedBy == stepLimitExhaustedBlockedBy
+}
+
 // shouldResumeStepLimit reports whether an exhaustion count is still inside the
 // automatic-resume budget. A count of 1 is the park being handled now; each
 // further exhaustion is one automatic continuation already spent.
@@ -733,11 +745,17 @@ func shouldResumeStepLimit(exhaustions int) bool {
 // resumeStepLimitPark clears a step-limit block and the item's claim state so
 // the next dispatch is a fresh run, and reports how many times this subject has
 // already stopped at its step budget. It refuses (ok=false) once that count
-// passes stepLimitAutoResumeLimit, leaving the block in place for a human.
+// passes stepLimitAutoResumeLimit, leaving the block in place for a human and
+// escalating once so the parked item is discoverable off the board.
 //
 // Clearing the claim state is not optional: the dispatch CASes from it, so a
 // cleared block alone leaves the item unparked but permanently busy.
-func (rc *WorkReconciler) resumeStepLimitPark(ctx context.Context, h *graph.WorkObjectHead) (int, bool) {
+func (rc *WorkReconciler) resumeStepLimitPark(ctx context.Context, h *graph.WorkObjectHead, block *WorkBlock) (int, bool) {
+	// The exhausted marker makes a step-limit park terminal: the escalation is
+	// already open, so later passes neither re-count nor re-notify every tick.
+	if blockIsStepLimitEscalated(block) {
+		return 0, false
+	}
 	exhaustions, err := rc.repo.CountStepLimitExhaustions(ctx, h.CanonicalID)
 	if err != nil {
 		rc.log.Warn("failed to count step-limit exhaustions",
@@ -747,6 +765,19 @@ func (rc *WorkReconciler) resumeStepLimitPark(ctx context.Context, h *graph.Work
 		return 0, false
 	}
 	if !shouldResumeStepLimit(exhaustions) {
+		if exhaustions > stepLimitAutoResumeLimit {
+			if eerr := rc.repo.EscalateStepLimitExhausted(ctx, h.ProjectID, h.CanonicalID, exhaustions); eerr != nil {
+				rc.log.Warn("failed to escalate exhausted step-limit park",
+					slog.String("canonical_id", h.CanonicalID),
+					slog.String("error", eerr.Error()),
+				)
+			} else {
+				rc.log.Warn("step-limit resume budget exhausted; escalated the work item to a human",
+					slog.String("canonical_id", h.CanonicalID),
+					slog.Int("exhaustions", exhaustions),
+				)
+			}
+		}
 		return exhaustions, false
 	}
 	if _, cerr := rc.repo.ClearWorkBlock(ctx, h.CanonicalID); cerr != nil {

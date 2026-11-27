@@ -227,3 +227,50 @@ func (r *Repository) ParkWorkItemForBudget(ctx context.Context, projectID, canon
 	})
 	return err
 }
+
+// EscalateStepLimitExhausted makes an exhausted step-limit park terminal for
+// the reconciler and mints exactly one human escalation task. Past
+// stepLimitAutoResumeLimit the item must be discoverable without someone
+// watching the board, exactly like a budget park (#1189 follow-up).
+//
+// The marker update is the single-writer gate: concurrent reconcilers race on
+// it and only the one whose UPDATE changes the row creates the task. A later
+// pass sees the marker and skips both the count query and the escalation, so a
+// permanently parked item costs nothing per minute.
+func (r *Repository) EscalateStepLimitExhausted(ctx context.Context, projectID, canonicalID string, exhaustions int) error {
+	if r == nil || canonicalID == "" {
+		return nil
+	}
+	marker := stepLimitExhaustedBlockedBy
+	res, err := r.db.NewRaw(`
+		UPDATE kb.work_blocks
+		   SET blocked_by = ?, updated_at = ?
+		 WHERE canonical_id = ?::uuid
+		   AND failure_class = ?
+		   AND blocked_by IS DISTINCT FROM ?`,
+		marker, time.Now(), canonicalID, string(FailureClassStepLimit), marker,
+	).Exec(ctx)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Another reconciler already escalated this park (or it is no longer a
+		// step-limit block): do not mint a duplicate.
+		return nil
+	}
+	desc := fmt.Sprintf(
+		"class=%s: automatic resume budget exhausted after %d step-limit stops. The item is still blocked; unblock or retry it to continue.",
+		FailureClassStepLimit, exhaustions,
+	)
+	sourceType := "work_object"
+	_, err = r.CreateWorkTask(ctx, &tasks.Task{
+		ProjectID:   projectID,
+		Title:       "Work item parked (step limit)",
+		Description: &desc,
+		Type:        "work-escalation",
+		Status:      "pending",
+		SourceType:  &sourceType,
+		SourceID:    &canonicalID,
+	})
+	return err
+}
