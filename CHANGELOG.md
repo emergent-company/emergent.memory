@@ -47,6 +47,25 @@
 
 ### Changed
 
+**The release alias gate tolerates a retried publisher's re-stamped image** (2026-11-27)
+
+`v0.104.4` failed its web-ui publish because `release-versions.json` recorded the
+digest of a publisher attempt that the job's retry then replaced. A rebuild is not
+digest-stable — buildx stamps `created` and appends an attestation manifest — so a
+retried publisher moves the release tag's digest while a container receives the
+identical image, and the next release's alias assertion refused a legitimate alias
+with a message that blamed a force-moved tag. `check_previous_map` now compares
+the two manifests' *whole* image config document and layer `diff_ids` before
+failing, ignoring only the top-level `created` stamp and `history` that a rebuild
+necessarily re-stamps: a re-published identical build passes with a warning that
+names the retry and the `gh workflow run release-versions.yml --field tag=<release>`
+repair, while a different payload, runtime field (`HEALTHCHECK`, `OnBuild`, …),
+`Env` order or architecture set — or a digest the registry no longer serves —
+still fails closed (#1203). An image that stamps a wall-clock value into its own
+output (the server bakes `BUILD_TIME` from the job start into the binary)
+changes its payload on every retry, so it stays fail-closed and the record is
+regenerated after the publisher settles.
+
 **The queued-run sweep now covers fan-out and session runs** (2026-11-16)
 
 The stale-run reaper spared every run with a `root_run_id` or a `session_id`,

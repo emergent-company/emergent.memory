@@ -45,6 +45,8 @@
 #         CHECK_REPO          git checkout (default: .)
 #         CHECK_HEAD          commit to compare against (default: CHECK_CURRENT_TAG
 #                             when it resolves, else HEAD)
+#         CHECK_DOCKER        docker binary used to read the two images
+#                             (default: docker); tests inject a stub
 #       Signals for changed=false:
 #         1. CHECK_PREV_TAG must BE the previous release tag. A force-moved
 #            rolling tag (`cli-dev`, `connector-dev`, `mac-dev`, ...) is the #2087/0.88.0
@@ -60,6 +62,25 @@
 #         3. When the previous release's map exists, the digest recorded there
 #            for this service must equal CHECK_PREV_DIGEST (the digest about to
 #            be aliased), i.e. the previous tag was not moved after publication.
+#            The two digests are read through the map's per-service `image`,
+#            which is therefore part of what this signal needs; a map without
+#            one fails this signal rather than guessing the repository.
+#            A digest change is tolerated only when both manifests describe the
+#            same image: the whole config document (Env, Labels, Entrypoint,
+#            Cmd, Healthcheck, OnBuild, Shell, ...) and the rootfs layer
+#            diff_ids, i.e. the payload, must match, differing only in the
+#            top-level `created` stamp and `history` that a rebuild necessarily
+#            re-stamps. That is a retried publisher's re-published build, not a
+#            moved tag (#1203): a rebuild of identical inputs is not
+#            digest-stable (buildx stamps `created` and appends an attestation
+#            manifest), so the tag legitimately points at a new digest while a
+#            container receives the identical image. A tag moved to another
+#            payload still fails, and so does a comparison that cannot be made.
+#            An image that stamps a wall-clock value into its own output changes
+#            its payload on every retry — the server bakes BUILD_TIME from the
+#            job start into the binary — so it stays fail-closed; the record is
+#            regenerated after the publisher settles instead, which the failure
+#            message names.
 #       A missing previous release/map degrades to the tree comparison and never
 #       fails the release; a disagreement never degrades.
 #
@@ -219,6 +240,7 @@ resolve_prev_tag() {
 # check_previous_map <service> <prev-release> <map-path> <alias-source-digest>
 check_previous_map() {
   local service="$1" prev_release="$2" map="$3" prev_digest="$4"
+  local docker="${CHECK_DOCKER:-docker}"
   if [ -z "$map" ]; then
     return 0
   fi
@@ -234,7 +256,7 @@ check_previous_map() {
     return 0
   fi
 
-  local recorded
+  local recorded image
   recorded="$(jq -r --arg s "$service" \
     '[.services[]? | select(.service == $s)][0] | .digest // empty' \
     "$map" 2>/dev/null || true)"
@@ -244,7 +266,36 @@ check_previous_map() {
   fi
 
   if [ -n "$prev_digest" ] && [ "$recorded" != "$prev_digest" ]; then
-    die "alias source digest ${prev_digest} != digest ${recorded} recorded for ${service} in ${map_tag:-the previous release}; the previous release tag moved after publication (#2111)."
+    image="$(jq -r --arg s "$service" \
+      '[.services[]? | select(.service == $s)][0] | .image // empty' \
+      "$map" 2>/dev/null || true)"
+
+    # #1203: a retried publisher rebuilds and re-pushes the same tags, and a
+    # rebuild is not digest-stable (buildx stamps `created` and appends an
+    # attestation manifest), so the tag's digest legitimately differs from the
+    # one the map recorded from the earlier attempt. The image a container gets
+    # is unchanged, so the alias is still the previous release's image. Compare
+    # the runtime configurations before concluding that the tag moved. Any ref
+    # that cannot be read keeps the failure: an unverifiable record is not
+    # evidence either way (#2111).
+    local compared=2
+    if [ -n "$image" ]; then
+      compared=0
+      same_image "$docker" "${image}@${recorded}" "${image}@${prev_digest}" \
+        || compared=$?
+    fi
+    if [ "$compared" -eq 0 ]; then
+      warn "alias source digest ${prev_digest} differs from the ${recorded} recorded for ${service} in ${map_tag:-the previous release}, but both manifests describe the same image — identical config and layer diff_ids, differing only in the build timestamp and attestations — so a retried publisher re-stamped the same build (#1203). Proceeding with the alias; regenerate the record with: gh workflow run release-versions.yml --field tag=${map_tag:-<previous-tag>}"
+      return 0
+    fi
+    if [ "$compared" -eq 2 ]; then
+      if [ -n "$image" ]; then
+        warn "cannot rule out a retried publisher for ${service}: the runtime configuration of ${image}@${recorded} could not be compared with ${image}@${prev_digest} (#1203)."
+      else
+        warn "cannot rule out a retried publisher for ${service}: the previous map records no image, so the runtime configuration of ${recorded} and ${prev_digest} cannot be compared (#1203)."
+      fi
+    fi
+    die "alias source digest ${prev_digest} != digest ${recorded} recorded for ${service} in ${map_tag:-the previous release}; the previous release tag moved after publication (#2111), or its publisher retried and re-pushed it from a rebuild whose image is not the same (#1203). Refusing to alias an image the record does not describe; if the two images are the same build, this check passes, otherwise regenerate the record with: gh workflow run release-versions.yml --field tag=${map_tag:-<previous-tag>}"
   fi
 }
 
@@ -584,6 +635,60 @@ inspect_digest() {
   local docker="$1" ref="$2" out
   out="$("$docker" buildx imagetools inspect --format '{{json .Manifest}}' "$ref" 2>/dev/null)" || return 1
   jq -er '.digest // empty' <<<"$out" 2>/dev/null
+}
+
+# inspect_image <docker> <ref>: print a canonical JSON object identifying the
+# image <ref>, or fail when it cannot be read.
+#
+# The comparison is the WHOLE image config document — the config object (Env,
+# Labels, Entrypoint, Cmd, Healthcheck, OnBuild, Shell, User, WorkingDir,
+# Volumes, ExposedPorts, StopSignal, ...) plus the rootfs layer diff_ids, i.e.
+# the payload — not a projection of it. A moved tag must never be blessed just
+# because a chosen subset happens to match: the gate's question is whether the
+# image is the same one the record describes. The only fields dropped are the
+# ones a rebuild of identical inputs necessarily changes: the top-level
+# `created` stamp and `history` (whose entries carry per-build timestamps).
+# Manifest annotations and attestations never reach this document, so the extra
+# attestation manifest a retry publishes does not change the identity (#1203).
+#
+# `imagetools inspect --format '{{json .Image}}'` renders one config document
+# for a single-platform image and a map of platform -> document for a
+# multi-platform one (the server publishes amd64 + arm64), so both shapes are
+# normalised. A multi-platform image compares every platform, keyed by
+# platform: a re-stamp of one architecture, a dropped platform or a different
+# payload on one of them is a different image. An unrecognised document is a
+# failure, never an empty object that would compare equal to another
+# unrecognised one.
+inspect_image() {
+  local docker="$1" ref="$2" out
+  out="$("$docker" buildx imagetools inspect --format '{{json .Image}}' "$ref" 2>/dev/null)" || return 1
+  jq -S -c '
+    def image_identity:
+      if (.config | type) == "object" and (.rootfs | type) == "object" then
+        del(.created, .history)
+      else
+        error("not an image config document")
+      end;
+    if (.config | type) == "object" then
+      image_identity
+    elif type == "object" and length > 0 and all(.[]; (.config | type) == "object") then
+      map_values(image_identity) | to_entries | sort_by(.key) | from_entries
+    else
+      error("not an image config document")
+    end' <<<"$out" 2>/dev/null
+}
+
+# same_image <docker> <ref-a> <ref-b>
+#   0  both resolve and are the same image (config + layer diff_ids)
+#   1  both resolve and differ (a genuinely different image)
+#   2  one of the refs could not be read, so nothing can be concluded
+same_image() {
+  local docker="$1" a b
+  a="$(inspect_image "$docker" "$2")" || return 2
+  b="$(inspect_image "$docker" "$3")" || return 2
+  [ -n "$a" ] && [ -n "$b" ] || return 2
+  [ "$a" = "$b" ] || return 1
+  return 0
 }
 
 # probe_tags <docker> <authoritative-ref> <authoritative-digest> <candidate>...

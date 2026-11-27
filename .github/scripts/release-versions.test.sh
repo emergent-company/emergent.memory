@@ -250,6 +250,160 @@ expect_rc "clean: moved previous tag (digest mismatch) fails" 1 \
   "$script" check
 expect_stderr "clean: digest mismatch names both digests" \
   "the previous release tag moved after publication"
+expect_stderr "clean: a map without an image says why it cannot compare" \
+  "the previous map records no image"
+
+# ---------------------------------------------------------------------------
+# Retried publisher (#1203). A publisher retry rebuilds and re-pushes the same
+# tags; a rebuild is not digest-stable (buildx stamps `created` and appends an
+# attestation manifest), so the tag's digest moves after the map recorded the
+# earlier attempt. The image itself is unchanged, so the next release's alias is
+# legitimate and must not be refused as a moved tag. The tolerance is narrow:
+# the whole config document *and* the layer diff_ids must match — only the build
+# timestamp, history and attestations may differ — and an unreadable digest
+# still fails closed.
+# ---------------------------------------------------------------------------
+retry_map="$tmp/retry-map.json"
+cat >"$retry_map" <<'JSON'
+{
+  "schema_version": 1,
+  "release": {"tag": "v0.87.4", "version": "0.87.4", "commit": "deadbee"},
+  "previous_release": {"tag": "v0.87.3"},
+  "degraded": false,
+  "notes": [],
+  "services": [
+    {"service": "web-ui", "image": "ghcr.io/acme/memory-web-ui",
+     "version": "0.86.9", "version_source": "previous-map",
+     "digest": "sha256:attempt-1", "source": "aliased-from:v0.87.3"}
+  ]
+}
+JSON
+
+# A stub for `buildx imagetools inspect --format '{{json .Image}}'`: each ref
+# maps to the image config document the registry would return.
+mkdir -p "$tmp/config-bin"
+cat >"$tmp/config-bin/docker" <<'STUB'
+#!/usr/bin/env bash
+ref="${!#}"
+doc="$(awk -v r="$ref" '$1 == r { $1 = ""; sub(/^[ \t]+/, ""); print; exit }' "${FAKE_CONFIGS:?}")"
+if [ -z "$doc" ]; then
+  echo "not found: $ref" >&2
+  exit 1
+fi
+printf '%s\n' "$doc"
+STUB
+chmod +x "$tmp/config-bin/docker"
+
+# attempt-1 and attempt-2 are the same build: identical config and layer
+# diff_ids, differing only in `created` and `history` (which a rebuild stamps)
+# — exactly the v0.104.3 case. The remaining docs each differ in one thing the
+# gate must still catch: a different layer payload, a different HEALTHCHECK
+# (runtime-executed), and Env order (last entry wins, so it is semantic).
+configs="$tmp/configs.txt"
+: >"$tmp/empty-configs.txt"
+cat >"$configs" <<'EOF'
+ghcr.io/acme/memory-web-ui@sha256:attempt-1 {"created":"2026-11-01T18:50:01Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","NODE_ENV=production"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{"org.opencontainers.image.version":"0.104.3"}},"rootfs":{"type":"layers","diff_ids":["sha256:layer-a","sha256:layer-b"]},"history":[{"created":"2026-11-01T18:50:01Z","created_by":"COPY /app"}]}
+ghcr.io/acme/memory-web-ui@sha256:attempt-2 {"created":"2026-11-01T18:52:11Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","NODE_ENV=production"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{"org.opencontainers.image.version":"0.104.3"}},"rootfs":{"type":"layers","diff_ids":["sha256:layer-a","sha256:layer-b"]},"history":[{"created":"2026-11-01T18:52:11Z","created_by":"COPY /app"}]}
+ghcr.io/acme/memory-web-ui@sha256:payload-differs {"created":"2026-11-01T18:52:11Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","NODE_ENV=production"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{"org.opencontainers.image.version":"0.104.3"}},"rootfs":{"type":"layers","diff_ids":["sha256:layer-a","sha256:evil"]},"history":[]}
+ghcr.io/acme/memory-web-ui@sha256:healthcheck-differs {"created":"2026-11-01T18:52:11Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","NODE_ENV=production"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{"org.opencontainers.image.version":"0.104.3"},"Healthcheck":{"Test":["CMD-SHELL","curl -f http://localhost/ || exit 1"]}},"rootfs":{"type":"layers","diff_ids":["sha256:layer-a","sha256:layer-b"]},"history":[]}
+ghcr.io/acme/memory-web-ui@sha256:env-order-differs {"created":"2026-11-01T18:52:11Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["NODE_ENV=production","PATH=/usr/local/bin"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{"org.opencontainers.image.version":"0.104.3"}},"rootfs":{"type":"layers","diff_ids":["sha256:layer-a","sha256:layer-b"]},"history":[]}
+EOF
+
+expect_rc "retry: a re-stamped identical image allows the alias" 0 \
+  env CHECK_REPO="$clean" CHECK_SERVICE=web-ui CHECK_PATH=apps/web-ui \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
+  CHECK_PREV_MAP="$retry_map" CHECK_PREV_DIGEST=sha256:attempt-2 \
+  CHECK_DOCKER="$tmp/config-bin/docker" FAKE_CONFIGS="$configs" \
+  "$script" check
+expect_stdout "retry: the alias still succeeds" "alias=ok service=web-ui previous=v0.87.4"
+expect_stderr "retry: the tolerance names the retried publisher" \
+  "retried publisher re-stamped the same build"
+expect_stderr "retry: the stale record's repair is printed" \
+  "gh workflow run release-versions.yml --field tag=v0.87.4"
+
+# The gate must not bless a different payload just because the runtime config
+# projection happens to match: layer diff_ids are compared too.
+expect_rc "retry: a different payload with an identical config fails" 1 \
+  env CHECK_REPO="$clean" CHECK_SERVICE=web-ui CHECK_PATH=apps/web-ui \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
+  CHECK_PREV_MAP="$retry_map" CHECK_PREV_DIGEST=sha256:payload-differs \
+  CHECK_DOCKER="$tmp/config-bin/docker" FAKE_CONFIGS="$configs" \
+  "$script" check
+expect_stderr "retry: the payload difference is blamed on a moved tag" \
+  "the previous release tag moved after publication"
+
+# A field outside the old runtime projection — HEALTHCHECK is executed by the
+# container runtime — is still part of the identity.
+expect_rc "retry: a differing healthcheck fails" 1 \
+  env CHECK_REPO="$clean" CHECK_SERVICE=web-ui CHECK_PATH=apps/web-ui \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
+  CHECK_PREV_MAP="$retry_map" CHECK_PREV_DIGEST=sha256:healthcheck-differs \
+  CHECK_DOCKER="$tmp/config-bin/docker" FAKE_CONFIGS="$configs" \
+  "$script" check
+expect_stderr "retry: the healthcheck failure names the other possible cause" \
+  "retried and re-pushed it from a rebuild whose image is not the same"
+
+# Env order is semantic (the last entry wins at runtime), so it is compared
+# as-is rather than sorted.
+expect_rc "retry: a reordered Env is not treated as the same image" 1 \
+  env CHECK_REPO="$clean" CHECK_SERVICE=web-ui CHECK_PATH=apps/web-ui \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
+  CHECK_PREV_MAP="$retry_map" CHECK_PREV_DIGEST=sha256:env-order-differs \
+  CHECK_DOCKER="$tmp/config-bin/docker" FAKE_CONFIGS="$configs" \
+  "$script" check
+
+# A digest the registry no longer answers for cannot be compared, so the
+# mismatch must keep failing closed rather than being assumed benign.
+expect_rc "retry: an unreadable recorded digest fails closed" 1 \
+  env CHECK_REPO="$clean" CHECK_SERVICE=web-ui CHECK_PATH=apps/web-ui \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
+  CHECK_PREV_MAP="$retry_map" CHECK_PREV_DIGEST=sha256:attempt-2 \
+  CHECK_DOCKER="$tmp/config-bin/docker" FAKE_CONFIGS="$tmp/empty-configs.txt" \
+  "$script" check
+expect_stderr "retry: the unreadable comparison is reported" \
+  "cannot rule out a retried publisher"
+
+# The server image is multi-platform, so `imagetools inspect` reports one config
+# document per platform rather than one document. A re-stamped build must pass
+# there too, and a different payload on a single architecture must still fail.
+server_retry_map="$tmp/server-retry-map.json"
+cat >"$server_retry_map" <<'JSON'
+{
+  "schema_version": 1,
+  "release": {"tag": "v0.87.4", "version": "0.87.4", "commit": "deadbee"},
+  "previous_release": {"tag": "v0.87.3"},
+  "degraded": false,
+  "notes": [],
+  "services": [
+    {"service": "server", "image": "ghcr.io/acme/memory-server",
+     "version": "v0.86.9", "version_source": "previous-map",
+     "digest": "sha256:server-attempt-1", "source": "aliased-from:v0.87.3"}
+  ]
+}
+JSON
+server_configs="$tmp/server-configs.txt"
+cat >"$server_configs" <<'EOF'
+ghcr.io/acme/memory-server@sha256:server-attempt-1 {"linux/amd64":{"created":"2026-11-01T18:50:01Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]},"rootfs":{"type":"layers","diff_ids":["sha256:server-a"]},"history":[]},"linux/arm64":{"created":"2026-11-01T18:50:01Z","architecture":"arm64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]},"rootfs":{"type":"layers","diff_ids":["sha256:server-arm-a"]},"history":[]}}
+ghcr.io/acme/memory-server@sha256:server-attempt-2 {"linux/amd64":{"created":"2026-11-01T18:52:11Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]},"rootfs":{"type":"layers","diff_ids":["sha256:server-a"]},"history":[]},"linux/arm64":{"created":"2026-11-01T18:52:11Z","architecture":"arm64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]},"rootfs":{"type":"layers","diff_ids":["sha256:server-arm-a"]},"history":[]}}
+ghcr.io/acme/memory-server@sha256:server-arm-differs {"linux/amd64":{"created":"2026-11-01T18:52:11Z","architecture":"amd64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]},"rootfs":{"type":"layers","diff_ids":["sha256:server-a"]},"history":[]},"linux/arm64":{"created":"2026-11-01T18:52:11Z","architecture":"arm64","os":"linux","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]},"rootfs":{"type":"layers","diff_ids":["sha256:server-arm-evil"]},"history":[]}}
+EOF
+
+expect_rc "retry: a multi-platform image re-stamped per platform allows the alias" 0 \
+  env CHECK_REPO="$clean" CHECK_SERVICE=server CHECK_PATH=apps/server \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
+  CHECK_PREV_MAP="$server_retry_map" CHECK_PREV_DIGEST=sha256:server-attempt-2 \
+  CHECK_DOCKER="$tmp/config-bin/docker" FAKE_CONFIGS="$server_configs" \
+  "$script" check
+expect_stdout "retry: the multi-platform alias succeeds" "alias=ok service=server previous=v0.87.4"
+
+expect_rc "retry: one architecture differing still fails" 1 \
+  env CHECK_REPO="$clean" CHECK_SERVICE=server CHECK_PATH=apps/server \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
+  CHECK_PREV_MAP="$server_retry_map" CHECK_PREV_DIGEST=sha256:server-arm-differs \
+  CHECK_DOCKER="$tmp/config-bin/docker" FAKE_CONFIGS="$server_configs" \
+  "$script" check
+expect_stderr "retry: the multi-platform failure names the moved tag" \
+  "the previous release tag moved after publication"
 
 # A map belonging to a different release is ignored, not applied to this one.
 wrong_map="$tmp/wrong-map.json"
