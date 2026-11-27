@@ -193,6 +193,20 @@ func TestIsStepLimitBlock(t *testing.T) {
 	}
 }
 
+// An exhausted step-limit park is terminal exactly when the reconciler has
+// marked it: that marker is what stops the per-minute count query and the
+// duplicate escalation.
+func TestBlockIsStepLimitEscalated(t *testing.T) {
+	class := string(FailureClassStepLimit)
+	marker := stepLimitExhaustedBlockedBy
+	other := budgetParkBlockedBy
+	require.False(t, blockIsStepLimitEscalated(nil))
+	require.False(t, blockIsStepLimitEscalated(&WorkBlock{FailureClass: &class}),
+		"an unmarked step-limit park is still resume work")
+	require.False(t, blockIsStepLimitEscalated(&WorkBlock{FailureClass: &class, BlockedBy: &other}))
+	require.True(t, blockIsStepLimitEscalated(&WorkBlock{FailureClass: &class, BlockedBy: &marker}))
+}
+
 // The automatic-resume budget is what stops a run that can never converge from
 // looping for ever: the first exhaustion is resumed, the last one is a human's.
 func TestShouldResumeStepLimit(t *testing.T) {
