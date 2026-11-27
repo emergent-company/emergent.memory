@@ -50,8 +50,14 @@ const (
 
 	// maxListedPathBytes bounds one path in a changed-file listing. A path is
 	// PR-controlled and can be thousands of bytes; the listing has to fit many of
-	// them plus the resume line in one result.
+	// them plus the resume line in one result. A path cut here is marked with …
+	// so it is never mistaken for a usable path argument.
 	maxListedPathBytes = 512
+
+	// maxExactListedPathBytes bounds the exact-name escape a listing carries in
+	// structuredContent for a path too long for its text line. GitHub's own path
+	// limit is far below it; it only guards a hostile API response.
+	maxExactListedPathBytes = 4096
 
 	// maxListResumeBytes is the room a listing page keeps for its resume line, so
 	// the offset that continues a cut page is never itself cut.
@@ -596,7 +602,11 @@ func (h *ReviewToolHandler) executePRDiff(ctx context.Context, client *githubapp
 	// so a cut read must be able to enumerate the changed files it never saw. A
 	// listing is metadata, not content, so it is never evidence.
 	listFiles := boolArg(args, "list_files")
-	if listFiles && selection != nil {
+	// An empty files list yields a nil selection (it selects nothing, meaning
+	// "the whole diff"), but a caller that passed files: [] together with
+	// list_files asked for two different things. Refuse the combination instead
+	// of silently dropping one argument.
+	if listFiles && (selection != nil || emptyFilesArg(args)) {
 		return nil, apperror.NewValidation("github app tool: list_files cannot be combined with path or files; list the files first, then fetch one or more of them")
 	}
 	listOffset, _ := intArg(args, "list_offset")
@@ -653,7 +663,7 @@ func (h *ReviewToolHandler) executePullRequestDiff(ctx context.Context, client *
 		if listOffset >= len(files) {
 			return nil, apperror.NewValidationf("github app tool: list_offset %d is past the last of %d changed files", listOffset, len(files))
 		}
-		return h.fileListResult(headSHA, files, len(files) >= githubPRFileListCap, listOffset, resolved), nil
+		return h.fileListResult(headSHA, files, len(files) >= githubPRFileListCap, listOffset, resolved)
 	}
 
 	title := strings.TrimSpace(state.Title)
@@ -703,7 +713,7 @@ func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githu
 		if listOffset >= len(diff.Files) {
 			return nil, apperror.NewValidationf("github app tool: list_offset %d is past the last of %d changed files", listOffset, len(diff.Files))
 		}
-		return h.fileListResult(diff.SHA, diff.Files, len(diff.Files) >= githubCommitFileListCap, listOffset, resolved), nil
+		return h.fileListResult(diff.SHA, diff.Files, len(diff.Files) >= githubCommitFileListCap, listOffset, resolved)
 	}
 	header := fmt.Sprintf("commit %s\n%s", diff.SHA, truncateUTF8(strings.TrimSpace(diff.Message), maxDiffMessageBytes))
 	if attribution := resolved.attribution(); attribution != "" {
@@ -727,9 +737,12 @@ func (h *ReviewToolHandler) executeCommitDiff(ctx context.Context, client *githu
 //
 // The listing is numbered and resumable with list_offset: GitHub caps a pull
 // request at 3000 files and a deep path can be long, so a cut listing must not be
-// a dead end -- the page ends with the offset that continues it.
-func (h *ReviewToolHandler) fileListResult(sha string, files []githubapp.CommitFile, listingCapped bool, offset int, resolved *resolvedReviewSource) *mcp.ToolResult {
-	build := func(budget int) *mcp.ToolResult {
+// a dead end -- the page ends with the offset that continues it. A page that
+// cannot render even one entry is a validation error naming the configured
+// bound, never a resume line naming the offset it started from (which would
+// loop forever).
+func (h *ReviewToolHandler) fileListResult(sha string, files []githubapp.CommitFile, listingCapped bool, offset int, resolved *resolvedReviewSource) (*mcp.ToolResult, error) {
+	build := func(budget int) (*mcp.ToolResult, int) {
 		var b strings.Builder
 		fmt.Fprintf(&b, "changed files of %s (%d total", sha, len(files))
 		if offset > 0 {
@@ -740,8 +753,16 @@ func (h *ReviewToolHandler) fileListResult(sha string, files []githubapp.CommitF
 			fmt.Fprintf(&b, "source: %s\n", attribution)
 		}
 		last := offset
+		exactPaths := make(map[string]string)
 		for i := offset; i < len(files); i++ {
-			name := truncateUTF8(sanitizeDiffPath(files[i].Filename), maxListedPathBytes)
+			name := sanitizeDiffPath(files[i].Filename)
+			cut := len(name) > maxListedPathBytes
+			if cut {
+				// A path is PR-controlled and can be thousands of bytes. Mark the cut
+				// so the reader never mistakes the text for a usable path argument,
+				// and carry the exact name for MCP clients in structuredContent.
+				name = truncateUTF8(name, maxListedPathBytes) + "…"
+			}
 			line := fmt.Sprintf("%d\t%s (%s, +%d/-%d)\n", i+1, name, files[i].Status, files[i].Additions, files[i].Deletions)
 			// Keep room for the resume line: a page that fills the budget exactly
 			// would otherwise cut the offset that continues it.
@@ -749,6 +770,9 @@ func (h *ReviewToolHandler) fileListResult(sha string, files []githubapp.CommitF
 				break
 			}
 			b.WriteString(line)
+			if cut && len(files[i].Filename) <= maxExactListedPathBytes {
+				exactPaths[strconv.Itoa(i+1)] = files[i].Filename
+			}
 			last = i + 1
 		}
 		if listingCapped {
@@ -759,18 +783,23 @@ func (h *ReviewToolHandler) fileListResult(sha string, files []githubapp.CommitF
 		}
 		// The paths live in the text only: a parallel structured copy would double
 		// the payload for a field the reviewer model never sees (the harness
-		// forwards text content only).
+		// forwards text content only). The exception is a path too long for its
+		// text line: its exact name has no other home, so it is carried here.
+		structured := map[string]any{
+			"sha":           sha,
+			"files":         len(files),
+			"listing":       true,
+			"listingCapped": listingCapped,
+			"offset":        offset,
+			"lastOffset":    last,
+		}
+		if len(exactPaths) > 0 {
+			structured["exactPaths"] = exactPaths
+		}
 		return withResolvedSource(&mcp.ToolResult{
-			Content: []mcp.ContentBlock{{Type: "text", Text: b.String()}},
-			StructuredContent: map[string]any{
-				"sha":           sha,
-				"files":         len(files),
-				"listing":       true,
-				"listingCapped": listingCapped,
-				"offset":        offset,
-				"lastOffset":    last,
-			},
-		}, resolved)
+			Content:           []mcp.ContentBlock{{Type: "text", Text: b.String()}},
+			StructuredContent: structured,
+		}, resolved), last
 	}
 	budget := h.diffTextBudget()
 	if h.maxResultBytes > 0 {
@@ -779,9 +808,9 @@ func (h *ReviewToolHandler) fileListResult(sha string, files []githubapp.CommitF
 	if budget < 1 {
 		budget = 1
 	}
-	result := build(budget)
+	result, last := build(budget)
 	if h.maxResultBytes <= 0 {
-		return result
+		return listingPage(result, last, offset, len(files), h.maxResultBytes)
 	}
 	// Measure the marshalled result, exactly as renderBounded does for a diff: a
 	// listing is the one payload whose size is proportional to the number of
@@ -795,9 +824,28 @@ func (h *ReviewToolHandler) fileListResult(sha string, files []githubapp.CommitF
 		if budget < 1 {
 			budget = 1
 		}
-		result = build(budget)
+		result, last = build(budget)
 	}
-	return result
+	return listingPage(result, last, offset, len(files), h.maxResultBytes)
+}
+
+// listingPage guards the two ways a listing page can fail to serve its reader:
+// it can name the offset it started from (no progress, so a resume loops
+// forever), or it can still exceed the executor's bound after the shrink loop
+// ran out of attempts (header and resume line alone can be that large). Both are
+// a configured bound this tool cannot work within, so they are reported as a
+// validation error instead of a page the model cannot act on.
+func listingPage(result *mcp.ToolResult, last, offset, total, maxResultBytes int) (*mcp.ToolResult, error) {
+	if last == offset && offset < total {
+		return nil, apperror.NewValidationf("github app tool: the configured MCP tool result bound (%d bytes) cannot fit one changed-file listing entry; raise the bound for %s or read the diff with path/files", maxResultBytes, toolPRDiff)
+	}
+	if maxResultBytes > 0 {
+		raw, err := json.Marshal(result)
+		if err == nil && len(raw) > maxResultBytes {
+			return nil, apperror.NewValidationf("github app tool: the configured MCP tool result bound (%d bytes) cannot fit a changed-file listing page; raise the bound for %s or read the diff with path/files", maxResultBytes, toolPRDiff)
+		}
+	}
+	return result, nil
 }
 
 // renderBounded renders files under this tool's caps and, when the executor's
@@ -817,13 +865,14 @@ func (h *ReviewToolHandler) fileListResult(sha string, files []githubapp.CommitF
 // truncation trailer is added inside diffToolResult for the same reason: the loop
 // measures it with the payload that carries it.
 func (h *ReviewToolHandler) renderBounded(ctx context.Context, sha, header string, files []githubapp.CommitFile, selection map[string]struct{}, listingCapped bool, resolved *resolvedReviewSource) (*diffRender, *mcp.ToolResult, error) {
-	// Without an executor bound to measure against, hold the trailer's bytes back
-	// from the diff cap so appending it cannot push the text past maxDiffBytes. A
-	// configured bound needs no reservation: the result is marshalled and shrunk
-	// with the trailer already in it, so the loop measures the trailer exactly.
+	// When the diff cap itself is the ceiling (no executor bound, or one wider
+	// than maxDiffBytes), hold the trailer's bytes back from the diff text so
+	// appending it cannot push the text past maxDiffBytes. A tighter configured
+	// bound needs no reservation: the result is marshalled and shrunk with the
+	// trailer already in it, so the loop measures the trailer exactly.
 	wholeBudget := h.diffTextBudget()
 	textBudget := wholeBudget
-	if h.maxResultBytes <= 0 {
+	if !h.hasTighterResultBound() {
 		textBudget = wholeBudget - diffTruncationHintReserve
 		if textBudget < 512 {
 			textBudget = 512
@@ -866,12 +915,20 @@ func (h *ReviewToolHandler) renderBounded(ctx context.Context, sha, header strin
 	return rendered, result, nil
 }
 
+// hasTighterResultBound reports that the executor's per-result bound is below
+// maxDiffBytes, so the marshalled result is measured against it and it, not the
+// diff cap, is the ceiling. A bound at or above maxDiffBytes leaves the diff cap
+// in charge.
+func (h *ReviewToolHandler) hasTighterResultBound() bool {
+	return h.maxResultBytes > 0 && h.maxResultBytes < maxDiffBytes
+}
+
 // diffTextBudget is the largest diff text this tool emits. It never exceeds
-// maxDiffBytes and, when the executor's per-result bound is known, starts below
+// maxDiffBytes and, when the executor's per-result bound is tighter, starts below
 // it so the result envelope fits; renderBounded shrinks further and measures the
 // marshalled result, since JSON escaping varies by content.
 func (h *ReviewToolHandler) diffTextBudget() int {
-	if h.maxResultBytes > 0 && h.maxResultBytes < maxDiffBytes {
+	if h.hasTighterResultBound() {
 		return h.maxResultBytes
 	}
 	return maxDiffBytes
@@ -928,8 +985,11 @@ func diffTruncationHint(rendered *diffRender) string {
 	b.WriteString("Call github-pr-diff with list_files=true to list every changed path, then re-fetch the missing ones with path=\"<file>\" or files=[...].")
 	if shortened {
 		// Echoing a cut path here would send the reader to an argument the tool
-		// rejects; point at the listing, which always carries the exact name.
-		b.WriteString(" A name above is shortened: the listing returns it exactly.")
+		// rejects; point at the listing, which marks a shortened entry and keeps
+		// its exact name in structuredContent.exactPaths. Do not claim the text
+		// above is exact: it is not, and a name can also contain control
+		// characters that the listing sanitizes.
+		b.WriteString(" A name above is shortened (…): the list_files listing marks shortened paths and carries each exact name in structuredContent.exactPaths.")
 	}
 	b.WriteString("\n")
 	return b.String()
@@ -937,8 +997,9 @@ func diffTruncationHint(rendered *diffRender) string {
 
 // hintFileNames bounds the names echoed into the truncation hint: a filename is
 // PR-controlled, so a crafted one must not turn the hint into a payload of its
-// own. shortened reports that a name was cut, so the caller does not present it
-// as a usable path.
+// own. shortened reports that a name was actually cut, so the caller only
+// disclaims a displayed name when one really is shortened. Names merely omitted
+// past the limit are counted in the text and do not set it.
 func hintFileNames(names []string) (out string, shortened bool) {
 	const (
 		limit    = 8
@@ -947,7 +1008,6 @@ func hintFileNames(names []string) (out string, shortened bool) {
 	shown, more := names, 0
 	if len(shown) > limit {
 		shown, more = shown[:limit], len(shown)-limit
-		shortened = true
 	}
 	parts := make([]string, 0, len(shown))
 	for _, name := range shown {
@@ -1000,6 +1060,21 @@ func diffSelection(args map[string]any) (map[string]struct{}, error) {
 		return nil, nil
 	}
 	return selection, nil
+}
+
+// emptyFilesArg reports that the caller passed the files argument but named no
+// files in it. diffSelection treats that as "no selection", which would make
+// list_files + files: [] silently lose the files argument; the caller must pick
+// one mode.
+func emptyFilesArg(args map[string]any) bool {
+	switch files := args["files"].(type) {
+	case []any:
+		return len(files) == 0
+	case []string:
+		return len(files) == 0
+	default:
+		return false
+	}
 }
 
 // normalizeDiffPath trims a path as GitHub reports it. Agents sometimes prefix a
