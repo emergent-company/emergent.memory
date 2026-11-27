@@ -102,6 +102,27 @@ RUN case "${TARGETARCH:-amd64}" in \
     rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_${gh_arch}" && \
     gh --version
 
+# lefthook — the repository's git hooks (lefthook.yml: gofmt, go vet, go build,
+# the lint ratchet, secrets, design-system). Git hooks live in .git/hooks of a
+# clone and `git clone` never installs them, so the sandbox provisioner runs
+# `lefthook install` after cloning. Without this binary that call cannot run and
+# an agent's commit carries no local gate at all: the first check is CI, and a
+# red PR is then stranded with nobody to fix it (#1164, #1166, #1191). Pinned and
+# checksum-verified like gh/rtk/sqz above; amd64 and arm64.
+ARG LEFTHOOK_VERSION=2.2.2
+RUN case "${TARGETARCH:-amd64}" in \
+        amd64) lh_arch=x86_64; lh_sha=2b8d7fd52771f26d7a50260ef10cd6fe704d66f60102e566362b84da09884ab7 ;; \
+        arm64) lh_arch=arm64;  lh_sha=f28231481dc0539776165565d4c3a425a775b047030708b914d52ff91be3a536 ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL -o /tmp/lefthook.gz \
+        "https://github.com/evilmartians/lefthook/releases/download/v${LEFTHOOK_VERSION}/lefthook_${LEFTHOOK_VERSION}_Linux_${lh_arch}.gz" && \
+    echo "${lh_sha}  /tmp/lefthook.gz" | sha256sum -c - && \
+    gunzip -c /tmp/lefthook.gz > /usr/local/bin/lefthook && \
+    chmod 0755 /usr/local/bin/lefthook && \
+    rm -f /tmp/lefthook.gz && \
+    lefthook version
+
 # Install the emergent-memory Python SDK from the memory repo.
 # --break-system-packages is required on Debian bookworm (PEP 668 externally
 # managed environment). requests/pydantic/python-dateutil are common deps.
