@@ -4,10 +4,36 @@ on:
   push:
     branches: [main]
     paths: ['VERSION']
+  # The release path for a merge that GitHub completed on our behalf (#1363).
+  # `github-review-gate.yml` arms auto-merge on a review-bot `Verdict: MERGE`,
+  # and the platform then lands the PR as `app/github-actions`. A push made with
+  # `GITHUB_TOKEN` starts **no workflow runs**, so the `push: paths: ['VERSION']`
+  # trigger above never fires for it: the bump lands with no tag, no fan-out and
+  # nothing for `deploy-production.yml` to dispatch. v0.102.3 was tagged by hand
+  # because of this. `workflow_dispatch` is exempt from that suppression, so the
+  # gate dispatches this workflow through `.github/scripts/dispatch-release-tag.sh`
+  # once its armed merge lands. The run is idempotent (`Check if tag already
+  # exists`), so a second dispatch, or one that races a `RELEASE_TOKEN` push,
+  # does nothing.
+  #
+  # A dispatch means "cut the release now" -- the gate only dispatches for a PR
+  # that touched VERSION -- so the `[skip release]` escape hatch (a *push*-only
+  # concern) does not apply to it.
+  workflow_dispatch:
 
 permissions:
   contents: write
   actions: write   # required for the `gh workflow run` dispatch fallback below
+
+concurrency:
+  # One tagging run at a time. Tagging is a read-then-write -- "does the tag
+  # exist?" then `git tag`/`git push` -- so two runs for the same bump would both
+  # see it missing and the loser would fail red on an already-existing tag. A
+  # dispatch (from `github-review-gate.yml`, or `release-tag-watchdog.yml` after
+  # the fact) can race the push trigger for exactly that reason; serializing
+  # makes the second run see `exists=true` and skip.
+  group: auto-tag
+  cancel-in-progress: false
 
 jobs:
   tag:
@@ -23,7 +49,12 @@ jobs:
     # quotes the marker also skips the release. That fails safe (no tag, no
     # release) and the skip shows in the check list; tag manually with
     # `git tag -a vX.Y.Z && git push origin vX.Y.Z` if it was unintended.
-    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    #
+    # A `workflow_dispatch` has no `head_commit` at all, so the escape hatch is
+    # explicitly a push-only clause rather than relying on `contains(null, ...)`
+    # (which is false, but only by an expression-evaluation accident). The gate
+    # dispatches this workflow only for a merge that touched VERSION (#1363).
+    if: ${{ github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip release]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

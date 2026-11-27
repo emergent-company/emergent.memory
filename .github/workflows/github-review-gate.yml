@@ -1,33 +1,44 @@
 name: GitHub review gate
 
-# Dispatches the merge guard and enables auto-merge on the review bot's marker.
-# That marker is advisory: it never satisfies the required `verify` context and
-# never authorizes a merge — see the trust note below.
+# The bridge between a review-marker comment and the merge guard.
 #
 # The review agent posts a conversation comment:
 #
 #     Reviewed-SHA: <40-hex head>
 #     Verdict: MERGE | CHANGES_REQUESTED
 #
-# A review event alone cannot re-run `merge-guard` (it triggers on
-# pull_request_target push/reopen events), and the wrapper reads issue comments.
-# This workflow is the bridge: when the configured review bot comments a marker
-# for the current head, it dispatches a fresh guard run and enables auto-merge;
-# a rejection disables auto-merge.
+# A review comment cannot re-run `merge-guard` (it triggers on
+# `pull_request_target` push/reopen events), and the merge wrapper reads issue
+# comments, so this workflow is the only thing that reacts to one.
 #
-# Trust: `REVIEW_BOT_LOGINS` is a repository variable naming the review bot
-# login(s) (comma/space separated, e.g. `memory-reviewer[bot]`). The legacy
-# singular `REVIEW_BOT_LOGIN` is still read when the list is unset. It is the
-# producer setting only: it selects whose comment this workflow reads, and it
-# grants no trust. Do NOT add a listed App's immutable user id to
-# `MERGE_GUARD_TRUSTED_USER_IDS` — that allowlist is human identities only, and
-# a bot id in it is a documented misconfiguration that makes the merge guard
-# delta-only: the bot's marker on the newest head is then the entire review. A
-# bot marker is advisory: this workflow dispatches the guard and arms auto-merge
-# on it, but the marker never satisfies the required `verify` context and never
-# authorizes a merge, so the armed auto-merge waits for a trusted human or
-# independent marker on the same head. That wait is intended. This workflow
-# never trusts a human-commenter.
+# The two directions are deliberately asymmetric:
+#
+#   * ARMING is bot-only. `REVIEW_BOT_LOGINS` (repository variable, comma/space
+#     separated; the legacy singular `REVIEW_BOT_LOGIN` is read when the list is
+#     unset) names the review App. Arming on a human's marker would skip the
+#     check list and the marker gate that `scripts/merge-reviewed-pr.sh` applies,
+#     so a human MERGE marker is ignored here -- run the wrapper instead.
+#
+#   * DENYING is honoured from any trusted identity. A rejection grants nothing,
+#     which is why the "never trust a human commenter" rule does not apply to it;
+#     and the old author filter that ignored every non-bot comment was the hole
+#     in #1385 -- product #1036 merged 2m12s after a trusted
+#     `CHANGES_REQUESTED` on the same head. Trusted means
+#     `author_association` `OWNER`/`COLLABORATOR`, or an immutable user id in
+#     `MERGE_GUARD_TRUSTED_USER_IDS` (`MEMBER` alone is org membership, which in
+#     these repos is what repository admins also report). Never add a review
+#     App's bot id to that list: the allowlist is human identities only, and the
+#     policy is that a `Bot` never satisfies it whatever the variable holds
+#     (#1290, #1310).
+#
+# Whether an armed merge can actually land is decided by the required checks
+# (`reviewed`, published by the review App; plus `ci`). A bot marker can arm the
+# wait; a rejection disarms it here and re-evaluates the guard, which is the
+# backstop the gate was missing.
+#
+# The decision logic lives in `.github/scripts/review-gate.sh` (with
+# `review-gate.test.sh`), so the trust rule is a reviewed file rather than a
+# `run:` block no test can reach.
 on:
   issue_comment:
     types: [created]
@@ -44,68 +55,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Arm or disable from the bot marker
+      - name: Check out the default branch
+        uses: actions/checkout@v4
+        with:
+          # The gate runs reviewed code only: the default branch, never the PR
+          # head. `dispatch-release-tag.sh` reads VERSION from this tree.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Arm or disarm from the marker
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.issue.number }}
           BODY: ${{ github.event.comment.body }}
           AUTHOR: ${{ github.event.comment.user.login }}
+          AUTHOR_ASSOC: ${{ github.event.comment.author_association }}
+          AUTHOR_ID: ${{ github.event.comment.user.id }}
           BOT_LOGINS: ${{ vars.REVIEW_BOT_LOGINS }}
           BOT_LOGIN_LEGACY: ${{ vars.REVIEW_BOT_LOGIN }}
-        run: |
-          set -euo pipefail
-
-          logins="${BOT_LOGINS:-}"
-          # A whitespace/comma-only list counts as unset and falls back once.
-          if [[ -z "${logins//[[:space:],]/}" ]]; then
-            logins="${BOT_LOGIN_LEGACY:-}"
-          fi
-          if [[ -z "${logins//[[:space:],]/}" ]]; then
-            echo "REVIEW_BOT_LOGINS is unset; review gate is disabled"
-            exit 0
-          fi
-          # Comma, space, tab, or newline separated; GitHub logins are
-          # case-insensitive, so match the author exactly but ignoring case.
-          if ! printf '%s\n' "${logins}" | tr ', ' '\n\n' | tr -s '[:space:]' '\n' \
-              | sed '/^$/d' \
-              | grep -Fxiq "${AUTHOR}"; then
-            exit 0
-          fi
-
-          sha=$(printf '%s\n' "${BODY}" | awk '/^Reviewed-SHA: [0-9a-f]{40}[[:space:]]*$/ {print $2; exit}')
-          verdicts=$(printf '%s\n' "${BODY}" | awk '/^Verdict: [A-Za-z_][A-Za-z_ ]*[[:space:]]*$/ {sub(/^Verdict: /, ""); sub(/[[:space:]]+$/, ""); print}')
-          if [[ -z "${sha}" || -z "${verdicts}" ]]; then
-            exit 0
-          fi
-          # Any non-MERGE verdict in the comment rejects, matching merge-guard.
-          if printf '%s\n' "${verdicts}" | grep -qv '^MERGE$'; then
-            verdict=CHANGES_REQUESTED
-          else
-            verdict=MERGE
-          fi
-
-          head=$(gh pr view "${PR}" --repo "${REPO}" --json headRefOid --jq '.headRefOid')
-          if [[ "${sha}" != "${head}" ]]; then
-            echo "marker ${sha} does not name the head ${head}; ignoring"
-            exit 0
-          fi
-
-          case "${verdict^^}" in
-            MERGE)
-              gh workflow run merge-guard.yml --repo "${REPO}" -f pr="${PR}" \
-                || echo "warning: could not dispatch merge-guard"
-              gh pr merge "${PR}" --repo "${REPO}" --auto --squash \
-                || echo "warning: could not enable auto-merge"
-              ;;
-            CHANGES_REQUESTED)
-              # Re-evaluate the guard so a previously-green verify cannot stand
-              # after a rejection on an unchanged head, then disable auto-merge.
-              gh workflow run merge-guard.yml --repo "${REPO}" -f pr="${PR}" \
-                || echo "warning: could not dispatch merge-guard"
-              gh pr merge "${PR}" --repo "${REPO}" --disable-auto || true
-              ;;
-            *)
-              echo "unknown verdict ${verdict}; ignoring"
-              ;;
-          esac
+          TRUSTED_IDS: ${{ vars.MERGE_GUARD_TRUSTED_USER_IDS }}
+        run: bash .github/scripts/review-gate.sh
