@@ -107,9 +107,10 @@ func typeSimilarityThresholdFromEnv() float32 {
 
 // wireTaxonomy injects the built-in common-entity taxonomy into the discovery
 // service, so proposed types are aligned against a canonical, well-described set
-// before new ones are invented. It reads the embedded blueprint packs directly
-// (no DB, no blueprint apply). Best-effort: a failure leaves the taxonomy empty
-// and discovery still works against the project's installed types.
+// before new ones are invented, and the relationship phase prefers the catalog's
+// relationship vocabulary. It reads the embedded blueprint packs directly (no DB,
+// no blueprint apply). Best-effort: a failure leaves the taxonomy empty and
+// discovery still works against the project's installed types.
 func wireTaxonomy(svc *Service) {
 	if svc == nil {
 		return
@@ -136,7 +137,14 @@ func wireTaxonomy(svc *Service) {
 			Color:       color,
 		})
 	}
-	svc.SetTaxonomy(taxonomy)
+
+	var relDefs []blueprints.RelationshipTypeDef
+	if rd, rerr := blueprints.ListBuiltinRelationshipTypes(); rerr == nil {
+		relDefs = rd
+	} else {
+		svc.log.Warn("failed to load built-in relationship taxonomy; discovery runs without it", logger.Error(rerr))
+	}
+	svc.SetTaxonomy(taxonomy, relDefs)
 }
 
 // NewService creates a new discovery jobs service.

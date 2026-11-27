@@ -300,7 +300,7 @@ func TestMergeSemanticallySimilarTypesNarrowsCatalogCandidates(t *testing.T) {
 		{Name: "Organization", Tags: []string{"company", "business"}},
 		{Name: "Person", Tags: []string{"human"}},
 		{Name: "Recipe", Tags: []string{"food"}},
-	})
+	}, nil)
 
 	out := svc.mergeSemanticallySimilarTypes(context.Background(),
 		[]DiscoveredType{{TypeName: "Company"}}, nil, nil)
@@ -323,7 +323,7 @@ func TestMergeSemanticallySimilarTypesFallsBackToFullTaxonomy(t *testing.T) {
 		{Name: "Organization", Tags: []string{"company"}},
 		{Name: "Person", Tags: []string{"human"}},
 		{Name: "Recipe", Tags: []string{"food"}},
-	})
+	}, nil)
 
 	svc.mergeSemanticallySimilarTypes(context.Background(),
 		[]DiscoveredType{{TypeName: "Zzz"}}, nil, nil)
