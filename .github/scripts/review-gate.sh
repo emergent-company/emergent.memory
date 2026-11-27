@@ -27,13 +27,27 @@
 # these repos is what repository admins also report. A `Bot` is never trusted on
 # either route, whatever a variable holds (#1290, #1310).
 #
+# Bot-ness is the same two-signal identity the merge guard reads (#1325,
+# #1219): the `user.type` enum (case-insensitive) or an App login ending in
+# `[bot]`. Membership in `REVIEW_BOT_LOGINS` is *not* how a bot is recognised —
+# either payload field can be absent, and an unlisted App must never be read as
+# a trusted human — it only names the review App whose marker may arm. A bot
+# outside that list is advisory in both directions here, matching the guard: it
+# neither arms nor disarms.
+#
+# The event payload's `user.type` is read from `AUTHOR_TYPE` when the caller
+# passes it; a caller that only has the login still gets the same signal,
+# because the users API reports `Bot` for an App account. That lookup is a
+# fallback, not the primary: it fails open to the login suffix rather than
+# turning an ordinary comment into a red run.
+#
 # Exit status: 0 for every decision, including "nothing to do". A non-zero exit
 # would turn an ordinary comment into a red run, and the gate's own failure
 # signal is the `merge-guard` check, not this job.
 #
 # Usage:
 #   REPO=owner/name PR=42 BODY=... AUTHOR=... AUTHOR_ASSOC=... AUTHOR_ID=... \
-#   [BOT_LOGINS=...] [BOT_LOGIN_LEGACY=...] [TRUSTED_IDS=...] \
+#   [AUTHOR_TYPE=...] [BOT_LOGINS=...] [BOT_LOGIN_LEGACY=...] [TRUSTED_IDS=...] \
 #   .github/scripts/review-gate.sh
 set -euo pipefail
 
@@ -43,6 +57,7 @@ AUTHOR=${AUTHOR:?AUTHOR is required}
 BODY=${BODY:-}
 AUTHOR_ASSOC=${AUTHOR_ASSOC:-}
 AUTHOR_ID=${AUTHOR_ID:-}
+AUTHOR_TYPE=${AUTHOR_TYPE:-}
 BOT_LOGINS=${BOT_LOGINS:-}
 BOT_LOGIN_LEGACY=${BOT_LOGIN_LEGACY:-}
 TRUSTED_IDS=${TRUSTED_IDS:-}
@@ -68,8 +83,28 @@ id_in_list() { # <list> <id>
     | grep -Fxq -- "$id"
 }
 
+# Two signals, the same pair `merge-guard` reads (#1325): `user.type` is the
+# documented enum and an App's `user.login` ends in `[bot]`. Both
+# case-insensitive — a predicate that matches one spelling is a spelling away
+# from trusting it — and neither alone is identity, because either field can be
+# absent or renamed in a payload. This is what stops an unlisted App from being
+# read as a trusted human (#1219).
+author_type=$AUTHOR_TYPE
+# A `[bot]` login is decisive on its own (and its brackets would need escaping in
+# a path), so the lookup runs only for a login that does not carry the suffix.
+if [[ -z "$author_type" && "${AUTHOR,,}" != *'[bot]' ]]; then
+  author_type=$(gh api "users/${AUTHOR}" --jq '.type // ""' 2>/dev/null) || author_type=
+fi
 is_bot=0
-if login_in_list "$logins" "$AUTHOR"; then is_bot=1; fi
+if [[ "${author_type,,}" == "bot" ]] || [[ "${AUTHOR,,}" == *'[bot]' ]]; then
+  is_bot=1
+fi
+
+# The configured list names the review App whose marker may arm. It is the
+# *arming* decision, never the bot identity: a misconfigured list cannot turn
+# an App into a person, and an unlisted App cannot arm.
+is_configured_bot=0
+if login_in_list "$logins" "$AUTHOR"; then is_configured_bot=1; fi
 
 # A bot is never a trusted human, even when a variable lists its id: that
 # misconfiguration is what made the gate delta-only twice (#1290, #1310).
@@ -81,7 +116,12 @@ if ((!is_bot)); then
   esac
 fi
 
-if ((!is_bot && !is_trusted_human)); then
+if ((is_bot)); then
+  if ((!is_configured_bot)); then
+    echo "author ${AUTHOR} (${AUTHOR_ASSOC:-unknown}, id ${AUTHOR_ID:-unknown}) is a bot but not a configured review bot; a bot's marker is advisory, ignoring"
+    exit 0
+  fi
+elif ((!is_trusted_human)); then
   echo "author ${AUTHOR} (${AUTHOR_ASSOC:-unknown}, id ${AUTHOR_ID:-unknown}) is neither a configured review bot nor a trusted identity; ignoring"
   exit 0
 fi
