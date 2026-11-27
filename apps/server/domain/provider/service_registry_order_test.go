@@ -61,6 +61,12 @@ func TestEmbeddingProviderOrder_RegistryDerived(t *testing.T) {
 		t.Errorf("non-legacy embedding vendor %q should follow the legacy preference: %v", ProviderJina, order)
 	}
 
+	// LiteLLM (an OpenAI-compatible vendor) must also be selectable, so a
+	// project configured only with litellm still resolves an embedding model.
+	if _, ok := pos[ProviderLiteLLM]; !ok {
+		t.Fatalf("embedding order missing OpenAI-compatible vendor %q: %v", ProviderLiteLLM, order)
+	}
+
 	// Generative-only vendor must not appear in embedding order.
 	if _, ok := pos[ProviderAnthropic]; ok {
 		t.Errorf("generative-only vendor %q must not be in embedding order", ProviderAnthropic)

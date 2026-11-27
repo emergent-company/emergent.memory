@@ -109,29 +109,66 @@ type typeScore struct {
 	Found     int     `json:"discovered_count"`
 }
 
-// scoreTypes computes precision/recall of discovered type names against golden.
+// typeNameAliases maps a normalized discovered type name onto the normalized
+// canonical catalog name it should be scored against, so a correct-but-synonymous
+// discovery still counts as a hit (e.g. a discovered "Decision" toward the golden
+// "DecisionRecord"). Keys and values are already normalized.
+var typeNameAliases = map[string]string{
+	"decision":                "decisionrecord",
+	"energystoragetechnology": "storagesystem",
+	"actionitem":              "task",
+}
+
+// normalizeTypeName lowercases and strips every non-alphanumeric character so
+// "Decision Record", "decision_record" and "DecisionRecord" compare equal.
+func normalizeTypeName(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// scoreTypes computes precision/recall of discovered type names against golden,
+// normalizing both sides and applying typeNameAliases so a synonymous discovery
+// counts toward its canonical golden type.
 func scoreTypes(golden, discovered []string) typeScore {
 	gold := map[string]bool{}
 	for _, t := range golden {
-		gold[strings.TrimSpace(t)] = true
+		if n := normalizeTypeName(t); n != "" {
+			gold[n] = true
+		}
 	}
-	seen := map[string]bool{}
+	seen := map[string]bool{}    // normalized discovered names already considered
+	matched := map[string]bool{} // canonical golden names already hit
 	var tp, fp int
 	for _, t := range discovered {
-		t = strings.TrimSpace(t)
-		if t == "" || seen[t] {
+		n := normalizeTypeName(t)
+		if n == "" || seen[n] {
 			continue
 		}
-		seen[t] = true
-		if gold[t] {
+		seen[n] = true
+		if c, ok := typeNameAliases[n]; ok {
+			n = c
+		}
+		switch {
+		case gold[n] && !matched[n]:
+			matched[n] = true
 			tp++
-		} else {
+		case gold[n]:
+			// A second discovered name resolving to an already-matched golden
+			// type is a duplicate, not a new hit.
+			fp++
+		default:
 			fp++
 		}
 	}
 	fn := 0
 	for t := range gold {
-		if !seen[t] {
+		if !matched[t] {
 			fn++
 		}
 	}

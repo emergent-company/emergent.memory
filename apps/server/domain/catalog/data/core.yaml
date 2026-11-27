@@ -267,3 +267,67 @@ objectTypeSchemas:
       description: Name of the creator or author.
   required:
   - name
+- name: Role
+  label: Role
+  description: 'A role or position held by a person within an organization, team, or project.
+
+    '
+  category: work
+  parent: Thing
+  labels:
+  - role
+  - position
+  - title
+  ui:
+    icon: tabler--user-star
+    color: '#8B5CF6'
+  properties:
+    name:
+      type: string
+      description: The role's title or name.
+    description:
+      type: string
+      description: Responsibilities or purpose of the role.
+    start_date:
+      type: date
+      title: Start date
+      description: When the role began (YYYY-MM-DD).
+    end_date:
+      type: date
+      title: End date
+      description: When the role ended (YYYY-MM-DD), if applicable.
+  required:
+  - name
+- name: Device
+  label: Device
+  description: 'A piece of hardware or electronic equipment.
+
+    '
+  category: hardware
+  parent: Product
+  labels:
+  - device
+  - machine
+  ui:
+    icon: tabler--cpu
+    color: '#64748B'
+  properties:
+    name:
+      type: string
+      description: Device name.
+    description:
+      type: string
+      description: Device description.
+    manufacturer:
+      type: string
+      title: Manufacturer
+      description: Manufacturer name.
+    model:
+      type: string
+      title: Model
+      description: Model name or number.
+    url:
+      type: url
+      description: Product or specification URL.
+  required:
+  - name
