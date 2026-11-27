@@ -71,13 +71,19 @@ type modelConfigClears struct {
 
 // fakeMemory is an in-memory MemoryBackend for tests.
 type fakeMemory struct {
-	orgPresence         *PresenceDto
-	projectPresence     *PresenceDto
-	agents              []AgentDefinitionSummary
-	defs                map[string]*AgentDefinition // full definitions keyed by id
-	runtimeAgents       []RuntimeAgent
-	createdQueue        string
-	enabledRuntimeAgent string
+	// built-in catalog browse/install
+	catalogList           *CatalogList
+	catalogDetail         *CatalogTypeDetail
+	catalogInstall        *CatalogInstallResult
+	catalogErr            error
+	catalogInstalledTypes []string
+	orgPresence           *PresenceDto
+	projectPresence       *PresenceDto
+	agents                []AgentDefinitionSummary
+	defs                  map[string]*AgentDefinition // full definitions keyed by id
+	runtimeAgents         []RuntimeAgent
+	createdQueue          string
+	enabledRuntimeAgent   string
 	// defFetches records ids passed to GetAgentDefinition, in order, so tests
 	// can pin how many definition requests a render costs (#2181). Guarded by
 	// defMu: chatModelWarnings fetches definitions from concurrent goroutines.
@@ -5753,3 +5759,36 @@ func (f *fakeMemory) UpdateInstanceEmailSettings(context.Context, instanceEmailS
 	return &instanceEmailSettings{}, nil
 }
 func (f *fakeMemory) TestInstanceEmail(context.Context, string) error { return nil }
+
+func (f *fakeMemory) ListCatalog(_ context.Context, _, _, _ string) (*CatalogList, error) {
+	f.recordCatalog("ListCatalog")
+	if f.catalogErr != nil {
+		return nil, f.catalogErr
+	}
+	if f.catalogList != nil {
+		return f.catalogList, nil
+	}
+	return &CatalogList{}, nil
+}
+
+func (f *fakeMemory) GetCatalogType(_ context.Context, _ string) (*CatalogTypeDetail, error) {
+	f.recordCatalog("GetCatalogType")
+	if f.catalogErr != nil {
+		return nil, f.catalogErr
+	}
+	if f.catalogDetail != nil {
+		return f.catalogDetail, nil
+	}
+	return &CatalogTypeDetail{}, nil
+}
+
+func (f *fakeMemory) InstallCatalog(_ context.Context, types []string, _ bool) (*CatalogInstallResult, error) {
+	f.recordCatalog("InstallCatalog")
+	if f.catalogErr != nil {
+		return nil, f.catalogErr
+	}
+	if f.catalogInstall != nil {
+		return f.catalogInstall, nil
+	}
+	return &CatalogInstallResult{Types: types}, nil
+}

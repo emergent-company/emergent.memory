@@ -470,6 +470,43 @@ func (h *Handler) InstallCatalog(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
+// ListCatalog handles GET /api/blueprints/catalog.
+// @Summary      Browse the built-in catalog
+// @Description  Lists catalog object types with their category, parent, aliases and icon/color, plus category facets. Read-only; supports q/category/parent filters and limit/offset paging. Use catalog/type for one type's full detail and catalog/install to install types.
+// @Tags         blueprints
+// @Produce      json
+// @Param        q query string false "Lexical filter over name, label, description, aliases, category, parent"
+// @Param        category query string false "Exact category filter (e.g. media)"
+// @Param        parent query string false "Exact parent-type filter (e.g. CreativeWork)"
+// @Param        limit query int false "Page size (default 200, max 1000)"
+// @Param        offset query int false "Page offset"
+// @Success      200 {object} catalog.ListResult "Catalog page and facets"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/blueprints/catalog [get]
+// @Security     bearerAuth
+func (h *Handler) ListCatalog(c echo.Context) error {
+	cat, err := catalog.Load()
+	if err != nil {
+		return err
+	}
+	filter := catalog.ListFilter{
+		Query:    c.QueryParam("q"),
+		Category: c.QueryParam("category"),
+		Parent:   c.QueryParam("parent"),
+	}
+	if raw := strings.TrimSpace(c.QueryParam("limit")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			filter.Limit = n
+		}
+	}
+	if raw := strings.TrimSpace(c.QueryParam("offset")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			filter.Offset = n
+		}
+	}
+	return c.JSON(http.StatusOK, catalog.List(cat, filter))
+}
+
 // ResolveCatalog handles GET /api/blueprints/catalog/resolve.
 // @Summary      Resolve catalog types for a query
 // @Description  Ranks the built-in schema.org catalog types for a free-text query using lexical signals (name, label, alias, category, parent, description). Read-only; use the returned names with catalog/install.

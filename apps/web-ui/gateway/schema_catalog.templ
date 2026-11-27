@@ -1,0 +1,232 @@
+package main
+
+import (
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Catalog browser ---
+
+// SchemaCatalogPage renders the built-in catalog: category facets, a lexical
+// filter, and one card per type with an install action for types the project
+// does not already have.
+templ SchemaCatalogPage(view *SchemaCatalogView, loadErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if loadErr != nil {
+			@layout.Rail(schemaSubNav("catalog"), nil) {
+				@pageErrorNotice("Failed to load catalog", loadErr)
+			}
+		} else {
+			{{ var v SchemaCatalogView
+			if view != nil {
+				v = *view
+			}
+			var total int
+			if v.Catalog != nil {
+				total = v.Catalog.Total
+			} }}
+			@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Catalog")), "", "Catalog", "Built-in entity types you can install into this project. Only requested types are installed; relationships appear when both endpoint types are present.")
+			@flashToasts(v.FlashMsg, v.FlashErr)
+			@layout.Rail(schemaSubNav("catalog"), nil) {
+				<form method="get" action="/schema/catalog" class="mb-4 flex flex-wrap items-center gap-2" data-testid="catalog-search-form">
+					<input type="search" name="q" value={ v.Query } placeholder="Search the catalog — name, alias, category…" class="input input-sm w-full max-w-md" autocomplete="off" aria-label="Search catalog"/>
+					if v.Category != "" {
+						<input type="hidden" name="category" value={ v.Category }/>
+					}
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonSecondary, Size: ui.ButtonSM, Icon: "lucide--search"}) {
+						Search
+					}
+					if v.Query != "" || v.Category != "" {
+						<a class="text-xs font-medium text-primary hover:underline" href="/schema/catalog">Clear</a>
+					}
+				</form>
+
+				<div class="mb-5 flex flex-wrap items-center gap-2" data-testid="catalog-category-filter">
+					<a href={ templ.URL(catalogCategoryHref("", v.Query)) } class={ "badge badge-sm", templ.KV("badge-primary", v.Category == "") }>All</a>
+					if v.Catalog != nil {
+						for _, c := range v.Catalog.Categories {
+							<a href={ templ.URL(catalogCategoryHref(c.Key, v.Query)) } class={ "badge badge-sm", templ.KV("badge-primary", v.Category == c.Key) }>{ c.Key } <span class="opacity-60">({ c.Count })</span></a>
+						}
+					}
+				</div>
+
+				if v.Catalog == nil || len(v.Groups) == 0 {
+					@ui.EmptyState(ui.EmptyStateProps{
+						Icon:        "lucide--search",
+						Title:       "No catalog types match",
+						Description: "Clear the search or category filter to see the built-in catalog.",
+						Bordered:    true,
+					})
+				} else {
+					<p class="text-muted-faint mb-4 text-xs">{ countLabel(total, "type", "types") }</p>
+					<div class="flex flex-col gap-8" data-testid="catalog-groups">
+						for _, g := range v.Groups {
+							<section class="flex flex-col gap-3" data-testid="catalog-group" data-catalog-category={ g.Key }>
+								<h2 class="text-sm font-semibold text-muted-bright capitalize">{ g.Key }</h2>
+								<div class="grid gap-3 sm:grid-cols-2">
+									for _, t := range g.Types {
+										@catalogTypeCard(t, v.Installed[t.Name])
+									}
+								</div>
+							</section>
+						}
+					</div>
+				}
+			}
+		}
+	}
+}
+
+// catalogTypeCard is one browsable catalog type: icon/color accent, label, key,
+// description, facets, and an install action when the project lacks it.
+templ catalogTypeCard(t CatalogSummary, installed bool) {
+	<div class="flex gap-3 rounded-box border border-base-content/10 bg-base-100 p-3" data-testid="catalog-type" data-catalog-type={ t.Name }>
+		@typeIconTile(t.UI.icon(), t.UI.color())
+		<div class="min-w-0 flex-1">
+			<div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+				<a class="truncate text-sm font-medium text-base-content hover:underline" href={ templ.URL(catalogTypeHref(t.Name)) }>{ catalogSummaryLabel(t) }</a>
+				<span class="text-muted-faint truncate font-mono text-[11px]">{ t.Name }</span>
+				if installed {
+					@ui.Badge(ui.BadgeProps{Label: "Installed", Variant: ui.BadgeSecondary, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
+				}
+			</div>
+			if t.Description != "" {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
+					{ t.Description }
+				}
+			}
+			<div class="mt-2 flex flex-wrap items-center gap-1">
+				if t.Category != "" {
+					@ui.Badge(ui.BadgeProps{Label: t.Category, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+				}
+				if t.Parent != "" {
+					@ui.Badge(ui.BadgeProps{Label: "in " + t.Parent, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+				}
+				for _, l := range t.Labels {
+					@ui.Badge(ui.BadgeProps{Label: l, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+				}
+			</div>
+		</div>
+		if !installed {
+			<form method="post" action="/schema/catalog/install" class="shrink-0 self-start">
+				<input type="hidden" name="type" value={ t.Name }/>
+				<button type="submit" class="btn btn-primary btn-xs" data-testid="catalog-install">Install</button>
+			</form>
+		}
+	</div>
+}
+
+// --- Catalog type detail ---
+
+// SchemaCatalogTypePage renders one catalog type with hierarchy, properties,
+// related relationships, and an install action.
+templ SchemaCatalogTypePage(view *SchemaCatalogTypeView, loadErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if loadErr != nil {
+			@layout.Rail(schemaSubNav("catalog"), nil) {
+				@pageErrorNotice("Failed to load catalog type", loadErr)
+			}
+		} else {
+			{{ var v SchemaCatalogTypeView
+			if view != nil {
+				v = *view
+			}
+			d := v.Detail
+			if d == nil {
+				d = &CatalogTypeDetail{}
+			}
+			t := d.Type
+			keys := sortedCatalogPropertyKeys(t.Properties) }}
+			@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Catalog")), "", catalogTypeTitle(d), t.Description)
+			@flashToasts(v.FlashMsg, v.FlashErr)
+			@layout.Rail(schemaSubNav("catalog"), nil) {
+				<div class="flex flex-col gap-6" data-testid="catalog-type-detail" data-catalog-type={ t.Name }>
+					<div class="flex flex-wrap items-start gap-3 rounded-box border border-base-content/10 bg-base-100 p-4">
+						@typeIconTile(t.UI.icon(), t.UI.color(), typeIconTileLead)
+						<div class="min-w-0 flex-1">
+							<div class="flex flex-wrap items-center gap-2">
+								<h1 class="text-lg font-semibold">{ catalogTypeLabel(t) }</h1>
+								<span class="text-muted-faint font-mono text-xs">{ t.Name }</span>
+								if v.Installed {
+									@ui.Badge(ui.BadgeProps{Label: "Installed", Variant: ui.BadgeSecondary, Size: ui.BadgeSizeSM, Icon: "lucide--check"})
+								}
+							</div>
+							<div class="mt-2 flex flex-wrap items-center gap-1">
+								if t.Category != "" {
+									@ui.Badge(ui.BadgeProps{Label: t.Category, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+								}
+								if t.Parent != "" {
+									@ui.Badge(ui.BadgeProps{Label: "parent: " + t.Parent, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+								}
+								for _, l := range t.Labels {
+									@ui.Badge(ui.BadgeProps{Label: l, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+								}
+							</div>
+						</div>
+						if !v.Installed {
+							<form method="post" action="/schema/catalog/install">
+								<input type="hidden" name="type" value={ t.Name }/>
+								@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Icon: "lucide--plus"}) {
+									Install into project
+								}
+							</form>
+						}
+					</div>
+
+					if len(d.Ancestors) > 0 {
+						<div class="flex flex-wrap items-center gap-1 text-xs" data-testid="catalog-ancestors">
+							<span class="text-muted-faint">Ancestors:</span>
+							for _, a := range d.Ancestors {
+								<a class="text-primary hover:underline" href={ templ.URL(catalogTypeHref(a)) }>{ a }</a>
+							}
+						</div>
+					}
+
+					if len(d.Children) > 0 {
+						<div class="flex flex-wrap items-center gap-1" data-testid="catalog-children">
+							<span class="text-muted-faint text-xs">Subtypes:</span>
+							for _, c := range d.Children {
+								<a class="badge badge-sm" href={ templ.URL(catalogTypeHref(c)) }>{ c }</a>
+							}
+						</div>
+					}
+
+					@ui.Section("Properties", ui.SectionProps{Margin: "mb-2", Raw: true, Empty: len(keys) == 0, EmptyIcon: "lucide--list", EmptyTitle: "No properties", EmptyDesc: "This type declares no properties."}) {
+						<table class="table table-sm">
+							<thead>
+								<tr><th>Property</th><th>Type</th><th>Description</th></tr>
+							</thead>
+							<tbody>
+								for _, k := range keys {
+									{{ p := t.Properties[k] }}
+									<tr>
+										<td class="font-mono text-xs">{ k }</td>
+										<td><span class="badge badge-ghost badge-xs">{ p.Type }</span></td>
+										<td class="text-muted text-xs">{ catalogPropertyDescription(p) }</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					}
+
+					@ui.Section("Related relationships", ui.SectionProps{Margin: "mb-2", Raw: true, Empty: len(d.RelatedRelationships) == 0, EmptyIcon: "lucide--git-branch", EmptyTitle: "No relationships", EmptyDesc: "No candidate relationship touches this type."}) {
+						<ul class="flex flex-col gap-2">
+							for _, r := range d.RelatedRelationships {
+								<li class="flex flex-wrap items-center gap-2 rounded-box border border-base-content/10 bg-base-100 px-3 py-2" data-testid="catalog-relationship">
+									<span class="text-sm font-medium">{ r.Name }</span>
+									<span class="badge badge-ghost badge-xs font-mono">{ r.SourceType } → { r.TargetType }</span>
+									if r.Description != "" {
+										<span class="text-muted text-xs">{ r.Description }</span>
+									}
+								</li>
+							}
+						</ul>
+					}
+
+					<a class="text-xs font-medium text-primary hover:underline" href="/schema/catalog">Back to catalog</a>
+				</div>
+			}
+		}
+	}
+}

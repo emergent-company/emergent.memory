@@ -23,6 +23,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.PUT("/github-credentials", h.SaveGithubCredentials, authMiddleware.RequireProjectID())
 	g.GET("/model-overrides", h.GetModelOverrides, authMiddleware.RequireProjectID())
 	g.PUT("/model-overrides", h.UpsertModelOverrides, authMiddleware.RequireProjectID())
+	// Catalog browse: read-only list with facets and filters.
+	g.GET("/catalog", h.ListCatalog, authMiddleware.RequireProjectID())
 	// Catalog install: project-scoped projection of the schema.org taxonomy.
 	g.POST("/catalog/install", h.InstallCatalog, authMiddleware.RequireProjectID())
 	// Catalog resolve: read-only ranked type lookup over the built-in catalog.
