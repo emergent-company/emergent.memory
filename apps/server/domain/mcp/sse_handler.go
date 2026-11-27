@@ -72,6 +72,22 @@ func NewSSEHandler(svc *Service, handler *Handler, log *slog.Logger) *SSEHandler
 	}
 }
 
+// lookupSSEState returns a copy of a session's durable state, read under the
+// lock, and whether it existed. Callers must use the copy rather than holding a
+// pointer into the map: the initialize and notifications/initialized paths write
+// Initialized and ClientName under the write lock, so reading a stored pointer
+// after the lock is released races those writes.
+func (h *SSEHandler) lookupSSEState(sessionID string) (*sessionInitState, bool) {
+	h.sessionStateMu.RLock()
+	defer h.sessionStateMu.RUnlock()
+	stored := h.sessionState[sessionID]
+	if stored == nil {
+		return nil, false
+	}
+	snapshot := *stored
+	return &snapshot, true
+}
+
 // lookupSSESession returns the durable state and the live stream for a session
 // ID. Either may be nil (a session may have state but no open stream, or a
 // stream that has not initialized yet). The state is returned as a copy read
@@ -81,13 +97,7 @@ func (h *SSEHandler) lookupSSESession(sessionID string) (*sessionInitState, *SSE
 	if sessionID == "" {
 		return nil, nil
 	}
-	h.sessionStateMu.RLock()
-	var state *sessionInitState
-	if stored := h.sessionState[sessionID]; stored != nil {
-		snapshot := *stored
-		state = &snapshot
-	}
-	h.sessionStateMu.RUnlock()
+	state, _ := h.lookupSSEState(sessionID)
 
 	h.sseSessionsMu.RLock()
 	stream := h.sseSessions[sessionID]
@@ -284,10 +294,11 @@ func (h *SSEHandler) HandleSSEMessage(c echo.Context) error {
 // processRequest processes a JSON-RPC request for SSE transport.
 // sessionID is the ?sessionId query param (may be empty for sessionless clients).
 func (h *SSEHandler) processRequest(c echo.Context, req *Request, projectID string, user *auth.AuthUser, sessionID string) *Response {
-	// Look up durable session state (survives SSE reconnects)
-	h.sessionStateMu.RLock()
-	state, stateExists := h.sessionState[sessionID]
-	h.sessionStateMu.RUnlock()
+	// Look up durable session state (survives SSE reconnects). The copy is taken
+	// under the lock: the initialize and initialized-notification paths below
+	// write these same fields, so reading them from the map after releasing the
+	// lock would race those writes.
+	state, stateExists := h.lookupSSEState(sessionID)
 
 	initialized := stateExists && state.Initialized
 	clientName := ""

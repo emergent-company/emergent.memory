@@ -242,16 +242,21 @@ func TestAuthorizeSSESession(t *testing.T) {
 // request is parsed or its response is pushed onto the owner's stream.
 func TestHandleSSEMessageRejectsForeignSession(t *testing.T) {
 	const projectA = "11111111-1111-4111-8111-111111111111"
-	newHandler := func() *SSEHandler {
+	// The owner's stream is backed by a real recorder: if the authorization were
+	// skipped, the request would run on and write to this stream. A bare
+	// &SSESession{} would instead panic on a nil writer, which fails the test for
+	// the wrong reason and would read as an unrelated crash in CI.
+	newHandler := func() (*SSEHandler, *httptest.ResponseRecorder) {
+		streamRec := httptest.NewRecorder()
 		h := NewSSEHandler(nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 		h.sseSessions["sse-1"] = &SSESession{
 			ID: "sse-1", ProjectID: projectA, UserID: "user-1", APITokenID: "token-1",
-			Done: make(chan struct{}),
+			Writer: streamRec, Flusher: streamRec, Done: make(chan struct{}),
 		}
 		h.sessionState["sse-1"] = &sessionInitState{
 			ProjectID: projectA, UserID: "user-1", APITokenID: "token-1", Initialized: true,
 		}
-		return h
+		return h, streamRec
 	}
 	post := func(h *SSEHandler, user *auth.AuthUser) error {
 		e := echo.New()
@@ -271,10 +276,13 @@ func TestHandleSSEMessageRejectsForeignSession(t *testing.T) {
 		{"another credential", &auth.AuthUser{ID: "user-1", APITokenID: "token-2", ProjectID: projectA}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := post(newHandler(), tc.user)
+			h, streamRec := newHandler()
+			err := post(h, tc.user)
 			var appErr *apperror.Error
 			require.ErrorAs(t, err, &appErr)
 			require.Equal(t, http.StatusForbidden, appErr.HTTPStatus)
+			require.Zero(t, streamRec.Body.Len(),
+				"a refused request must not write to the owner's stream")
 		})
 	}
 }
