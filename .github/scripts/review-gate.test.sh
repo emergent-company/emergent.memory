@@ -17,6 +17,8 @@
 #   * a MEMBER is trusted only through the id allowlist;
 #   * a human MERGE marker never arms;
 #   * a Bot is never trusted, even with its id in the allowlist;
+#   * an *unlisted* App (`[bot]` login or `user.type: Bot`) is never a trusted
+#     human either -- it is advisory, so it neither arms nor disarms (#1219);
 #   * a stale marker or an unmarked comment does nothing.
 #
 # `DISPATCH_RELEASE` points at a recording stub, so the release helper is not
@@ -57,6 +59,10 @@ printf '%s\n' "$*" >>"${GH_STUB_STATE}/calls"
 if [[ "${1:-} ${2:-}" == "pr view" && "$*" == *"--json headRefOid"* ]]; then
   printf '%s\n' "${GH_STUB_HEAD:?}"
 fi
+# The bot-identity lookup review-gate.sh uses when AUTHOR_TYPE is not passed.
+if [[ "${1:-}" == api && "${2:-}" == users/* ]]; then
+  printf '%s\n' "${GH_STUB_USER_TYPE:-User}"
+fi
 exit 0
 STUB
 
@@ -83,7 +89,7 @@ run_case() { # <author> <assoc> <id> <body> [ENV=value...]
   shift 4
   : >"${state}/calls"
   status=0
-  env -u BOT_LOGINS -u BOT_LOGIN_LEGACY -u TRUSTED_IDS \
+  env -u BOT_LOGINS -u BOT_LOGIN_LEGACY -u TRUSTED_IDS -u AUTHOR_TYPE \
     PATH="${bin}:${PATH}" \
     GH_STUB_STATE="${state}" GH_STUB_HEAD="${HEAD}" \
     REPO="${REPO}" PR="${PR}" AUTHOR="${author}" AUTHOR_ASSOC="${assoc}" \
@@ -231,6 +237,52 @@ if ((status != 0)) || armed || ! disarmed; then
   bad "a multi-word verdict with a padded SHA line rejects (exit ${status})"
 else
   ok "a multi-word verdict with a padded SHA line rejects"
+fi
+
+# 15. An unlisted App is not a trusted human (#1219). The login ends in `[bot]`
+#     and the association is OWNER, which the old `REVIEW_BOT_LOGINS`-only
+#     predicate read as a person and honoured as a rejection. A bot's marker is
+#     advisory in both directions, so this does nothing.
+run_case 'some-app[bot]' OWNER 4242 "$(comment "$HEAD" CHANGES_REQUESTED)" \
+  BOT_LOGINS="$BOT" TRUSTED_IDS="$ALLOW"
+if ((status != 0)) || ! no_action; then
+  bad "an unlisted [bot] App is not treated as a trusted human (#1219) (exit ${status})"
+else
+  ok "an unlisted [bot] App is not treated as a trusted human (#1219)"
+fi
+
+# 16. ... and the same holds when the only bot signal is `user.type: Bot` on a
+#     login with no `[bot]` suffix, with its id even sitting in the human
+#     allowlist: identity outranks the variable. The type comes from the users
+#     API here, which is the route the gate uses when the payload field is not
+#     passed as AUTHOR_TYPE.
+run_case reviewer-app MEMBER 188950 "$(comment "$HEAD" CHANGES_REQUESTED)" \
+  GH_STUB_USER_TYPE=Bot BOT_LOGINS="$BOT" TRUSTED_IDS="$ALLOW"
+if ((status != 0)) || ! no_action; then
+  bad "a user.type:Bot author is not trusted through the id allowlist (#1219) (exit ${status})"
+else
+  ok "a user.type:Bot author is not trusted through the id allowlist (#1219)"
+fi
+
+# 17. The identity signal must not stop the *configured* review App from
+#     arming: it appears as an App too (`[bot]` login and type Bot). Here the
+#     payload field is passed directly, so both bot routes are exercised.
+run_case "$BOT" MEMBER 357094646 "$(comment "$HEAD" MERGE)" \
+  AUTHOR_TYPE=Bot BOT_LOGINS="$BOT" TRUSTED_IDS="$ALLOW"
+if ((status != 0)) || ! armed || ! guard_dispatched || ! release_started || disarmed; then
+  bad "a configured review App still arms when user.type is Bot (exit ${status})"
+else
+  ok "a configured review App still arms when user.type is Bot"
+fi
+
+# 18. A `User` from the lookup changes nothing: an OWNER still denies, and the
+#     lookup itself did not consume the decision.
+run_case mkucharz OWNER 1051101 "$(comment "$HEAD" CHANGES_REQUESTED)" \
+  GH_STUB_USER_TYPE=User BOT_LOGINS="$BOT" TRUSTED_IDS="$ALLOW"
+if ((status != 0)) || armed || ! disarmed; then
+  bad "an OWNER with user.type User still denies after the lookup (exit ${status})"
+else
+  ok "an OWNER with user.type User still denies after the lookup"
 fi
 
 if ((fail)); then
