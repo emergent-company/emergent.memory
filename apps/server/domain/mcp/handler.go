@@ -284,9 +284,13 @@ func (h *Handler) handleInitialize(c echo.Context, req *Request, user *auth.Auth
 	if token != "" {
 		h.sessionsMu.Lock()
 		previous := h.sessions[token]
+		// An initialize that carries project_id is itself an explicit selection.
+		// A re-initialize without one falls back to the caller's default project
+		// (or none), so a switch to some other project must not survive it: the
+		// flag and the project would disagree, letting the write gate pass on a
+		// project this session was never switched to.
 		switched := params.ProjectID != ""
-		if previous != nil && previous.ProjectSwitched {
-			// A re-initialize without project_id must not clear an explicit switch.
+		if !switched && previous != nil && previous.ProjectSwitched && previous.ProjectID == projectID {
 			switched = true
 		}
 		h.sessions[token] = &Session{
@@ -417,7 +421,7 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 	// transport handles them before dispatch. The switch is authorized by the
 	// same check initialize performs.
 	if action, ok := projectSessionAction(params.Name, params.Arguments); ok {
-		return h.handleProjectSessionAction(c, req, session, user, action, params.Arguments)
+		return h.handleProjectSessionAction(c, req, user, action, params.Arguments)
 	}
 
 	// Get project ID: an explicit `project` action=use wins over the per-request
@@ -477,7 +481,7 @@ func (h *Handler) handleToolsCall(c echo.Context, req *Request, user *auth.AuthU
 
 // handleProjectSessionAction performs `project` action=list or action=use on
 // this session. It returns the JSON-RPC response; the caller always returns it.
-func (h *Handler) handleProjectSessionAction(c echo.Context, req *Request, session *Session, user *auth.AuthUser, action string, args map[string]any) *Response {
+func (h *Handler) handleProjectSessionAction(c echo.Context, req *Request, user *auth.AuthUser, action string, args map[string]any) *Response {
 	// The service resolves the caller from the standard context (the echo context
 	// carries it for auth.MustGetUser only), so stamp it for the project-list query.
 	ctx := auth.ContextWithUser(c.Request().Context(), user)
@@ -502,9 +506,20 @@ func (h *Handler) handleProjectSessionAction(c echo.Context, req *Request, sessi
 			)
 			return NewErrorResponse(req.ID, ErrCodeForbidden, "Project access denied", nil)
 		}
+		// Replace the stored session with an updated copy rather than mutating it
+		// in place: getSession hands the pointer to request paths that read these
+		// fields after releasing the lock, so an in-place write is a data race
+		// (the streamable transport's putSession has the same copy-on-write
+		// contract). The switch was authorized above, so a refusal cannot get
+		// here.
+		token := extractToken(c)
 		h.sessionsMu.Lock()
-		session.ProjectID = projectID
-		session.ProjectSwitched = true
+		if stored, ok := h.sessions[token]; ok {
+			next := *stored
+			next.ProjectID = projectID
+			next.ProjectSwitched = true
+			h.sessions[token] = &next
+		}
 		h.sessionsMu.Unlock()
 		h.log.Info("MCP project switched",
 			slog.String("project_id", projectID),

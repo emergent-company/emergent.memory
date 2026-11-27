@@ -536,8 +536,14 @@ func (h *StreamableHTTPHandler) sessionForCaller(sessionID string, user *auth.Au
 //     never resume another's session (or a narrower token inherit a broader
 //     session);
 //   - project: a session initialized for a project may only be used while
-//     addressing that project. A session with no project keeps resolving the
-//     project from the caller, as before.
+//     addressing that project, unless the client explicitly switched it
+//     (issue #1163). A switch is authorized against org membership by
+//     authorizeProjectClaim and persisted, and every executing request
+//     (tools/call, resources/read, prompts/get) re-runs that same membership
+//     check for the session's project — so a switched session intentionally
+//     differs from the caller's default project without weakening the gate. A
+//     session with no project keeps resolving the project from the caller, as
+//     before.
 //
 // The operator transport resolves no project context, so it enforces identity
 // and credential only. A nil session or user fails closed.
@@ -551,7 +557,7 @@ func (h *StreamableHTTPHandler) authorizeSession(session *MCPSession, user *auth
 	if session.APITokenID != user.APITokenID && (session.APITokenID != "" || user.APITokenID != "") {
 		return errSessionForbidden
 	}
-	if !h.admin && session.ProjectID != "" && user.ProjectID != "" && session.ProjectID != user.ProjectID {
+	if !h.admin && !session.ProjectSwitched && session.ProjectID != "" && user.ProjectID != "" && session.ProjectID != user.ProjectID {
 		return errSessionForbidden
 	}
 	return nil

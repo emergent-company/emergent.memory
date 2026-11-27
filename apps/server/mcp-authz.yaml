@@ -62,6 +62,21 @@
       "why": "read kb.projects + kb.organization_memberships; this function IS the membership authorizer for session-bound endpoints (#868), read-only"
     },
     {
+      "file": "apps/server/domain/mcp/project_session.go",
+      "func": "GetProjectSummary",
+      "why": "read kb.projects (LEFT JOIN kb.orgs) for ONE project by id, read-only, no caller identity involved; every caller authorizes the project first through authorizeProjectClaim (project action=use result, and the bound-token fallback inside ListMemberProjects), so it can only describe a project the caller was already granted"
+    },
+    {
+      "file": "apps/server/domain/mcp/project_session.go",
+      "func": "ListMemberProjects",
+      "why": "read kb.projects joined to kb.orgs + kb.organization_memberships filtered by om.user_id = the authenticated caller, read-only; returns only projects of orgs the caller is a member of, and a project-bound non-OAuth token is narrowed to its own APITokenProjectID (the OAuth-grant widening is decided by tokenHasActiveOAuthGrant, server-side, failing closed)"
+    },
+    {
+      "file": "apps/server/domain/mcp/project_session.go",
+      "func": "tokenHasActiveOAuthGrant",
+      "why": "existence read of core.oauth_grants for ONE api-token id (revoked_at IS NULL), read-only and keyed by the credential being authorized; it only decides whether a project-bound token is a user-scoped OAuth connector credential — an error fails closed and a missing grant keeps the strict project binding"
+    },
+    {
       "file": "apps/server/domain/mcp/schema_tools.go",
       "func": "executeCreateSchema",
       "why": "write INSERT kb.graph_schemas + registries, project-scoped (WHERE project_id = caller) and RLS-guarded via SetRLSContext; membership enforced by the transport (authorizeProjectClaim). Not delegated to schemas.CreatePack because the MCP tool's input contract (type_name keying, relationship types without canonical sourceType/targetType) is rejected by CreatePack validation; tracked in #1041"

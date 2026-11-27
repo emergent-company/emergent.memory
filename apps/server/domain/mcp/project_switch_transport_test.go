@@ -237,3 +237,118 @@ func TestLegacyHandlerProjectSwitch(t *testing.T) {
 	require.Equal(t, ErrCodeForbidden, denied.Error.Code)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// TestStreamableProjectSwitchSurvivesProjectBoundCredential is the regression
+// for the blocker the first review found: an OAuth-issued access token is an
+// ordinary project API token, so RequireAuth sets user.ProjectID to the consent
+// project on EVERY request. A switched session therefore legitimately differs
+// from the caller's default project, and the transport's session-identity rule
+// must not reject it — before the fix, every request after `project use B`
+// answered 404 session_not_found and the client silently re-initialized on the
+// consent project.
+func TestStreamableProjectSwitchSurvivesProjectBoundCredential(t *testing.T) {
+	db, mock := newAuthzMockDB(t)
+	// The credential has an API token id, so the share-instance allowlist lookup
+	// runs; an empty fake store keeps it off the auth mock.
+	svc := &Service{db: db, shareInstances: newFakeShareStore()}
+	h := NewStreamableHTTPHandler(svc, slog.Default())
+	user := &auth.AuthUser{
+		ID:                "u1",
+		APITokenID:        "tok1",
+		APITokenProjectID: testProjectA,
+		ProjectID:         testProjectA, // stamped from the token on every request
+		Scopes:            []string{"graph:read", "projects:read"},
+	}
+
+	// initialize on the consent project: the claim matches the token binding, so
+	// no grant lookup or membership query is made.
+	initRec, initResp := streamEndpointRequest(t, h, user, "initialize", InitializeParams{
+		ProtocolVersion: LatestProtocolVersion,
+		ClientInfo:      ClientInfo{Name: "claude-connector", Version: "1.0"},
+		ProjectID:       testProjectA,
+	}, "")
+	require.Nil(t, initResp.Error, "%+v", initResp.Error)
+	sessionID := initRec.Header().Get("Mcp-Session-Id")
+	require.NotEmpty(t, sessionID)
+
+	// use: another project in the same org. The token is OAuth-minted, so it acts
+	// as a user-scoped connector credential and the switch is decided by org
+	// membership.
+	expectOAuthGrant(t, mock, true)
+	expectProjectOrg(t, mock, "org-1")
+	expectMembership(t, mock, true)
+	expectProjectSummary(t, mock, testProjectB, "Beta", "org-1", "Org One")
+	_, useResp := streamEndpointRequest(t, h, user, "tools/call", projectCall("project", map[string]any{
+		"action": "use", "project_id": testProjectB,
+	}), sessionID)
+	require.Nil(t, useResp.Error, "%+v", useResp.Error)
+
+	// A later request on the same session is accepted (not 404) and reports the
+	// switched project as active.
+	expectOAuthGrant(t, mock, true)
+	expectMemberProjectRows(t, mock,
+		[]string{testProjectA, "Alpha", "org-1", "Org One", "org_member"},
+		[]string{testProjectB, "Beta", "org-1", "Org One", "org_member"},
+	)
+	_, listResp := streamEndpointRequest(t, h, user, "tools/call", projectCall("project", map[string]any{"action": "list"}), sessionID)
+	require.Nil(t, listResp.Error, "%+v", listResp.Error)
+	listData := listResp.Result.(map[string]any)["structuredContent"].(map[string]any)["data"].(map[string]any)
+	require.EqualValues(t, testProjectB, listData["activeProjectId"])
+
+	// A dispatched tool re-checks membership of the SWITCHED project: the user has
+	// since left the org, so the call is refused even though the credential's own
+	// project is still testProjectA.
+	expectOAuthGrant(t, mock, true)
+	expectProjectOrg(t, mock, "org-1")
+	expectMembership(t, mock, false)
+	_, denied := streamEndpointRequest(t, h, user, "tools/call", projectCall("entity-query", map[string]any{"type_name": "Person"}), sessionID)
+	require.NotNil(t, denied.Error)
+	require.Equal(t, ErrCodeForbidden, denied.Error.Code)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestLegacyReinitializeWithoutProjectDropsSwitch pins the second transport's
+// re-initialize rule: when a re-initialize names no project the session falls
+// back to the caller's default, so a previous switch must not survive it while
+// ProjectSwitched stays true — that combination would let the strict write gate
+// pass on a project this initialize never selected.
+func TestLegacyReinitializeWithoutProjectDropsSwitch(t *testing.T) {
+	db, mock := newAuthzMockDB(t)
+	svc := &Service{db: db}
+	h := NewHandler(svc, slog.Default(), nil)
+	user := &auth.AuthUser{ID: "u1", ProjectID: testProjectA, Scopes: []string{"graph:read", "projects:read"}}
+
+	expectProjectOrg(t, mock, "org-1")
+	expectMembership(t, mock, true)
+	initResp := legacyRPCRequest(t, h, user, "tok-1", "initialize", InitializeParams{
+		ProtocolVersion: LatestProtocolVersion,
+		ClientInfo:      ClientInfo{Name: "claude-connector", Version: "1.0"},
+	})
+	require.Nil(t, initResp.Error, "%+v", initResp.Error)
+
+	expectProjectOrg(t, mock, "org-1")
+	expectMembership(t, mock, true)
+	expectProjectSummary(t, mock, testProjectB, "Beta", "org-1", "Org One")
+	useResp := legacyRPCRequest(t, h, user, "tok-1", "tools/call", projectCall("project", map[string]any{
+		"action": "use", "project_id": testProjectB,
+	}))
+	require.Nil(t, useResp.Error, "%+v", useResp.Error)
+
+	// Re-initialize without project_id: the project reverts to the caller default
+	// and the explicit-selection flag must drop with it.
+	expectProjectOrg(t, mock, "org-1")
+	expectMembership(t, mock, true)
+	reInit := legacyRPCRequest(t, h, user, "tok-1", "initialize", InitializeParams{
+		ProtocolVersion: LatestProtocolVersion,
+		ClientInfo:      ClientInfo{Name: "claude-connector", Version: "1.0"},
+	})
+	require.Nil(t, reInit.Error, "%+v", reInit.Error)
+
+	h.sessionsMu.RLock()
+	session := h.sessions["tok-1"]
+	h.sessionsMu.RUnlock()
+	require.NotNil(t, session)
+	require.Equal(t, testProjectA, session.ProjectID)
+	require.False(t, session.ProjectSwitched, "the switch must not outlive an initialize that dropped its project")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
