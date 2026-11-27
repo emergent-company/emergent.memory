@@ -93,8 +93,8 @@ strict clients: `resource` always equals the URL the client addressed (RFC 9728
 §3.3), and `scopes_supported` lists the scopes the authorization server
 understands. Registered clients are public (PKCE, no client secret), and an
 OAuth-issued token is an ordinary non-expiring project API token. Its grant
-records the signed-in user, which is what lets an MCP session switch projects
-(see below).
+records the signed-in user and the consent model the user approved; an
+account-wide grant is what lets an MCP session switch projects (see below).
 
 ### Session project selection
 
@@ -113,10 +113,13 @@ runs again on every later tool call, so removing a user from an organization
 also revokes an already-switched session. A denied switch leaves the previous
 project in place.
 
-Project-bound API tokens stay bound to their project. Tokens minted by the
-built-in OAuth authorization server are user-scoped connector credentials: the
-consent flow picks the initial project, and the session may then switch to any
-project the signed-in user belongs to.
+Project-bound API tokens stay bound to their project. A token minted by the
+built-in OAuth authorization server is a user-scoped connector credential only
+when its grant was approved under account-wide consent
+(`core.oauth_grants.project_scope = 'account'`): the consent flow picks the
+starting project, and the session may then switch to any project the signed-in
+user belongs to. Grants created before that consent model existed are
+`project`-scoped and stay bound to their project until the user re-consents.
 
 Set `MCP_REQUIRE_PROJECT_SWITCH=true` to make the transports refuse write tools
 until the client has explicitly selected the project with `project`
