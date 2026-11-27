@@ -22,6 +22,11 @@ import (
 //   - Project-bound API tokens: the claimed project must match the token's bound
 //     project (RequireProjectTokenScope already bound the header; this closes the
 //     initialize-params bypass that could otherwise claim a foreign project).
+//     Exception (issue #1163): a token minted by the built-in OAuth authorization
+//     server is a user-scoped connector credential — its consent selects the
+//     initial project, but the signed-in user may switch the MCP session to any
+//     project they are an org member of. Such a token falls through to the same
+//     membership check; the grant lookup fails closed.
 //   - Ownerless tokens (user_id = NULL): no owning user exists to resolve
 //     membership for, so they pass through (mirroring RequireProjectMember).
 //   - Session callers and account-level tokens with an owning user: the claimed
@@ -48,10 +53,24 @@ func (s *Service) authorizeProjectClaim(ctx context.Context, user *auth.AuthUser
 	// 1. Project-bound tokens are already bound by RequireProjectTokenScope;
 	//    reconcile the initialize-claimed project against the binding.
 	if user.APITokenProjectID != "" {
-		if projectID != user.APITokenProjectID {
+		if projectID == user.APITokenProjectID {
+			return nil
+		}
+		// An OAuth-minted token is a user-scoped connector credential: the
+		// consent flow picks the initial project, but the session may switch to
+		// another project the owning user belongs to (issue #1163). The grant
+		// lookup is server-side and fails closed; a grantless project API token
+		// keeps the strict binding. Membership is checked below either way.
+		if user.ID == "" || user.APITokenID == "" {
 			return apperror.NewForbidden("API token is scoped to a different project")
 		}
-		return nil
+		oauthGranted, err := s.tokenHasActiveOAuthGrant(ctx, user.APITokenID)
+		if err != nil {
+			return err
+		}
+		if !oauthGranted {
+			return apperror.NewForbidden("API token is scoped to a different project")
+		}
 	}
 
 	// 2. Ownerless tokens (user_id = NULL) have no owning user to resolve

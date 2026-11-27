@@ -50,6 +50,14 @@ func expectMembership(t *testing.T, mock sqlmock.Sqlmock, isMember bool) {
 		WillReturnRows(sqlmock.NewRows([]string{"?column?"}).AddRow(isMember))
 }
 
+// expectOAuthGrant sets the expectation for the core.oauth_grants lookup that
+// classifies a project-bound token as a user-scoped OAuth connector credential.
+func expectOAuthGrant(t *testing.T, mock sqlmock.Sqlmock, granted bool) {
+	t.Helper()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT") + `[\s\S]*core\.oauth_grants[\s\S]*`).
+		WillReturnRows(sqlmock.NewRows([]string{"?column?"}).AddRow(granted))
+}
+
 func TestAuthorizeProjectClaim(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -74,11 +82,41 @@ func TestAuthorizeProjectClaim(t *testing.T) {
 			wantErr:   false,
 		},
 		{
-			name: "project-bound token claiming foreign project is forbidden",
+			name: "grantless project-bound token claiming foreign project is forbidden",
 			user: &auth.AuthUser{
 				APITokenID: "tok1", ID: "u1", APITokenProjectID: "proj-own", Scopes: []string{"agents:write"},
 			},
-			projectID:  "proj-foreign",
+			projectID: "proj-foreign",
+			setup: func(t *testing.T, mock sqlmock.Sqlmock) {
+				expectOAuthGrant(t, mock, false)
+			},
+			wantErr:    true,
+			wantStatus: 403,
+		},
+		{
+			name: "OAuth token claiming a foreign project as a member passes",
+			user: &auth.AuthUser{
+				APITokenID: "tok1", ID: "u1", APITokenProjectID: "proj-own", Scopes: []string{"graph:write"},
+			},
+			projectID: "proj-other",
+			setup: func(t *testing.T, mock sqlmock.Sqlmock) {
+				expectOAuthGrant(t, mock, true)
+				expectProjectOrg(t, mock, "org-other")
+				expectMembership(t, mock, true)
+			},
+			wantErr: false,
+		},
+		{
+			name: "OAuth token claiming a foreign project as a non-member is forbidden",
+			user: &auth.AuthUser{
+				APITokenID: "tok1", ID: "u1", APITokenProjectID: "proj-own", Scopes: []string{"graph:write"},
+			},
+			projectID: "proj-victim",
+			setup: func(t *testing.T, mock sqlmock.Sqlmock) {
+				expectOAuthGrant(t, mock, true)
+				expectProjectOrg(t, mock, "org-victim")
+				expectMembership(t, mock, false)
+			},
 			wantErr:    true,
 			wantStatus: 403,
 		},

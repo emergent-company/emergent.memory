@@ -108,6 +108,11 @@ type Service struct {
 	entityQueryTimeout      time.Duration
 	entityQueryFullMaxLimit int
 
+	// requireProjectSwitch makes the project transports refuse write tools until
+	// the session's project was selected explicitly with `project` action=use
+	// (issue #1163). Configured by MCP_REQUIRE_PROJECT_SWITCH; false by default.
+	requireProjectSwitch bool
+
 	// Documents service (for document list/get/upload/delete tools)
 	documentsSvc *documents.Service
 
@@ -298,6 +303,7 @@ func NewService(p ServiceParams) *Service {
 		braveSearchTimeout:        timeout,
 		entityQueryTimeout:        cfg.MCP.EntityQueryTimeout,
 		entityQueryFullMaxLimit:   cfg.MCP.EntityQueryFullMaxLimit,
+		requireProjectSwitch:      cfg.MCP.RequireProjectSwitch,
 		log:                       p.Log.With(logger.Scope("mcp.svc")),
 		documentsSvc:              p.DocumentsSvc,
 		storageSvc:                p.StorageSvc,
@@ -418,6 +424,31 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 				Type:       "object",
 				Properties: map[string]PropertySchema{},
 				Required:   []string{},
+			},
+		},
+		{
+			Name:         "project-list",
+			OutputSchema: envelopeOutputSchema(),
+			Description: "List the projects the signed-in user belongs to over this MCP session. Returns each project's id, name, organization and role, and marks the session's active project. Use this before project action=use when you do not know which project_id to target.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+				Required:   []string{},
+			},
+		},
+		{
+			Name:         "project-use",
+			OutputSchema: envelopeOutputSchema(),
+			Description: "Switch this MCP session's active project. project_id must be a project the signed-in user belongs to; membership is checked on every switch and re-checked on every later call. All later tool calls in this session use the selected project.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"project_id": {
+						Type:        "string",
+						Description: "UUID of the project to make active for this MCP session. Discover it with project action=list.",
+					},
+				},
+				Required: []string{"project_id"},
 			},
 		},
 		{
@@ -2079,6 +2110,8 @@ func (s *Service) legacyToolDefinitionsForProject(ctx context.Context, projectID
 var toolRequiredScope = map[string]string{
 	// Project
 	"project-get":    "graph:read",
+	"project-list":   "projects:read",
+	"project-use":    "projects:read",
 	"project-create": "projects:write",
 	"project-update": "projects:write",
 	// Schema read
@@ -2806,6 +2839,10 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 	switch toolName {
 	case "project-get":
 		return s.executeGetProjectInfo(ctx, projectID)
+	case "project-list":
+		return s.executeListMemberProjects(ctx, projectID)
+	case "project-use":
+		return s.executeProjectUse(ctx, projectID, args)
 	case "project-create":
 		return s.executeCreateProject(ctx, args)
 	case "project-update":
