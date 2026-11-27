@@ -185,7 +185,7 @@ Table "core"."oauth_grants" {
     (user_id) [name: "idx_oauth_grants_user_id"]
   }
 }
-// core.oauth_grants: Links a registered OAuth client to the project-scoped API token minted for it
+// core.oauth_grants: Links a registered OAuth client to the project API token minted for it; project_id records the starting project and project_scope the consent model: project (bound to that project) or account (may switch to any project the owning user belongs to)
 
 Table "core"."superadmins" {
   "user_id" uuid [pk]
