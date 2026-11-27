@@ -193,21 +193,16 @@ templ SchemaCatalogTypePage(view *SchemaCatalogTypeView, loadErr error) {
 					}
 
 					@ui.Section("Properties", ui.SectionProps{Margin: "mb-2", Raw: true, Empty: len(keys) == 0, EmptyIcon: "lucide--list", EmptyTitle: "No properties", EmptyDesc: "This type declares no properties."}) {
-						<table class="table table-sm">
-							<thead>
-								<tr><th>Property</th><th>Type</th><th>Description</th></tr>
-							</thead>
-							<tbody>
-								for _, k := range keys {
-									{{ p := t.Properties[k] }}
-									<tr>
-										<td class="font-mono text-xs">{ k }</td>
-										<td><span class="badge badge-ghost badge-xs">{ p.Type }</span></td>
-										<td class="text-muted text-xs">{ catalogPropertyDescription(p) }</td>
-									</tr>
-								}
-							</tbody>
-						</table>
+						<div class="flex flex-col" data-testid="catalog-properties">
+							for _, k := range keys {
+								{{ p := t.Properties[k] }}
+								<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-base-content/10 border-b py-1.5 last:border-0">
+									<span class="min-w-40 font-mono text-xs font-medium">{ k }</span>
+									<span class="badge badge-ghost badge-xs">{ p.Type }</span>
+									<span class="text-muted flex-1 text-xs">{ catalogPropertyDescription(p) }</span>
+								</div>
+							}
+						</div>
 					}
 
 					@ui.Section("Related relationships", ui.SectionProps{Margin: "mb-2", Raw: true, Empty: len(d.RelatedRelationships) == 0, EmptyIcon: "lucide--git-branch", EmptyTitle: "No relationships", EmptyDesc: "No candidate relationship touches this type."}) {
