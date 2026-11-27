@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/emergent-company/emergent.memory/domain/catalog"
 	"github.com/emergent-company/emergent.memory/pkg/llmjson"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/typehygiene"
@@ -31,7 +32,11 @@ type TypeSimilarity interface {
 // comparison. Properties/Required/Tags are populated for built-in taxonomy
 // types so a match can adopt the full canonical schema.
 type ExistingType struct {
-	Name        string
+	Name string
+	// Label is the human display label. Catalog types can carry one distinct
+	// from Name (e.g. "TV Series" for TVSeries); it feeds lexical resolution
+	// only. Empty falls back to Name.
+	Label       string
 	Description string
 	// Category is the optional browse/grouping lens ("media", "commerce", …).
 	// It is a disambiguation hint, not a subtyping edge.
@@ -56,11 +61,33 @@ func (s *Service) SetTypeSimilarity(t TypeSimilarity) {
 	s.typeSimilarity = t
 }
 
+// catalogResolveLimit bounds how many catalog candidates one discovered type
+// contributes to the classifier's comparison set during narrowing.
+const catalogResolveLimit = 8
+
 // SetTaxonomy injects the built-in common-entity taxonomy types that discovery
 // aligns proposed types against before inventing new ones. Nil-safe: without it,
-// the classifier matches only the project's installed types.
+// the classifier matches only the project's installed types. It also derives the
+// catalog.Type view the lexical resolver narrows candidates against.
 func (s *Service) SetTaxonomy(t []ExistingType) {
 	s.taxonomy = t
+	s.taxonomyTypes = make([]catalog.Type, 0, len(t))
+	for _, e := range t {
+		label := e.Label
+		if label == "" {
+			label = e.Name
+		}
+		s.taxonomyTypes = append(s.taxonomyTypes, catalog.Type{
+			Name:        e.Name,
+			Label:       label,
+			Description: e.Description,
+			Category:    e.Category,
+			Parent:      e.Parent,
+			Labels:      e.Tags,
+			Properties:  e.Properties,
+			Required:    e.Required,
+		})
+	}
 }
 
 // taxonomyUIStyle returns the declared UI icon and color for a canonical
@@ -95,21 +122,9 @@ func (s *Service) mergeSemanticallySimilarTypes(ctx context.Context, types []Dis
 	}
 
 	existing := buildExistingTypes(registered, current)
-	candidates := append([]ExistingType(nil), existing...)
 	installed := make(map[string]bool, len(existing))
 	for _, e := range existing {
 		installed[e.Name] = true
-	}
-	// A taxonomy type that is also already installed must not be offered twice;
-	// the project's installed entry is the one the classifier compares against.
-	for _, tx := range s.taxonomy {
-		if installed[tx.Name] {
-			continue
-		}
-		candidates = append(candidates, tx)
-	}
-	if len(candidates) == 0 {
-		return types
 	}
 
 	// A built-in taxonomy name adopts its full canonical schema on a match, but
@@ -133,6 +148,29 @@ func (s *Service) mergeSemanticallySimilarTypes(ctx context.Context, types []Dis
 		}
 	}
 	if len(toResolve) == 0 {
+		return types
+	}
+
+	// Narrow the taxonomy candidates with the catalog's deterministic lexical
+	// resolution before calling the model: the classifier then only arbitrates
+	// the taxonomy types that actually lexically resemble a discovered name, so
+	// its prompt stays small as the catalog grows. If nothing lexically matches
+	// (an unusual name), fall back to the whole taxonomy to preserve recall.
+	taxonomyCandidates := s.taxonomy
+	if narrowed, ok := s.narrowTaxonomy(toResolve); ok {
+		taxonomyCandidates = narrowed
+	}
+
+	// A taxonomy type that is also already installed must not be offered twice;
+	// the project's installed entry is the one the classifier compares against.
+	candidates := append([]ExistingType(nil), existing...)
+	for _, tx := range taxonomyCandidates {
+		if installed[tx.Name] {
+			continue
+		}
+		candidates = append(candidates, tx)
+	}
+	if len(candidates) == 0 {
 		return types
 	}
 
@@ -170,6 +208,33 @@ func (s *Service) mergeSemanticallySimilarTypes(ctx context.Context, types []Dis
 		out = append(out, t)
 	}
 	return out
+}
+
+// narrowTaxonomy resolves each unresolved discovered type against the catalog
+// view of the taxonomy and returns the union of their top lexical matches as
+// ExistingType values. ok is false when no discovered type matched anything (the
+// caller then keeps the full taxonomy, preserving recall for names the lexical
+// resolver cannot place).
+func (s *Service) narrowTaxonomy(toResolve []DiscoveredType) ([]ExistingType, bool) {
+	if len(s.taxonomyTypes) == 0 || len(s.taxonomy) == 0 {
+		return nil, false
+	}
+	names := make(map[string]bool)
+	for _, t := range toResolve {
+		for _, m := range catalog.ResolveTypesAgainst(s.taxonomyTypes, t.TypeName, catalogResolveLimit) {
+			names[m.Name] = true
+		}
+	}
+	if len(names) == 0 {
+		return nil, false
+	}
+	out := make([]ExistingType, 0, len(names))
+	for _, tx := range s.taxonomy {
+		if names[tx.Name] {
+			out = append(out, tx)
+		}
+	}
+	return out, len(out) > 0
 }
 
 // cloneProperties deep-copies a taxonomy property map (including nested maps

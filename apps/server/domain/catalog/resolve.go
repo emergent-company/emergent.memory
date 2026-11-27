@@ -30,6 +30,18 @@ func ResolveTypes(cat *Catalog, query string, limit int) []TypeMatch {
 	if cat == nil || len(cat.Types) == 0 {
 		return nil
 	}
+	return ResolveTypesAgainst(cat.Types, query, limit)
+}
+
+// ResolveTypesAgainst ranks an arbitrary type list against a free-text query
+// with the same deterministic lexical signals as ResolveTypes. It exists so a
+// caller can resolve against a merged vocabulary — the catalog plus the
+// remaining domain taxonomy packs — instead of a *Catalog alone. Discovery uses
+// it to narrow its candidate set before the classifier.
+func ResolveTypesAgainst(types []Type, query string, limit int) []TypeMatch {
+	if len(types) == 0 {
+		return nil
+	}
 	q := strings.TrimSpace(query)
 	if q == "" {
 		return nil
@@ -48,8 +60,8 @@ func ResolveTypes(cat *Catalog, query string, limit int) []TypeMatch {
 	qJoined := strings.Join(qTokens, " ")
 	qLower := strings.ToLower(q)
 
-	matches := make([]TypeMatch, 0, len(cat.Types))
-	for _, t := range cat.Types {
+	matches := make([]TypeMatch, 0, len(types))
+	for _, t := range types {
 		score, matched := scoreType(t, qLower, qJoined, qTokens)
 		if score <= 0 {
 			continue

@@ -125,6 +125,7 @@ func wireTaxonomy(svc *Service) {
 		color, _ := d.UI["color"].(string)
 		taxonomy = append(taxonomy, ExistingType{
 			Name:        d.Name,
+			Label:       d.Label,
 			Description: d.Description,
 			Category:    d.Category,
 			Parent:      d.Parent,

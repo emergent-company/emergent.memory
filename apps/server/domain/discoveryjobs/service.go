@@ -19,6 +19,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
+	"github.com/emergent-company/emergent.memory/domain/catalog"
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/extraction"
 	"github.com/emergent-company/emergent.memory/internal/config"
@@ -109,6 +110,11 @@ type Service struct {
 	// taxonomy is the built-in common-entity taxonomy discovery aligns proposed
 	// types against before inventing new ones (see SetTaxonomy).
 	taxonomy []ExistingType
+	// taxonomyTypes is the same taxonomy expressed as catalog.Type values, so
+	// the catalog's deterministic lexical resolver can narrow the classifier's
+	// candidate set before a run calls the model (see narrowTaxonomy). Populated
+	// alongside taxonomy in SetTaxonomy.
+	taxonomyTypes []catalog.Type
 }
 
 // documentCap is the effective per-run document cap.
