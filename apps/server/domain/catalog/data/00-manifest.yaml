@@ -1,6 +1,6 @@
 name: schemaorg
 version: 1.1.0
-description: 'Base common-entity taxonomy derived from schema.org and adjusted to Memory''s supported property types. Discovery aligns proposed types against this set before inventing new ones, so general entities (people, organizations, places, events, creative works, media) converge on one canonical name and property shape. Domain packs (e.g. tv-movies) add narrower types; shared type names are deduplicated in favour of this base pack.
+description: 'Base common-entity taxonomy derived from schema.org and adjusted to Memory''s supported property types. Discovery aligns proposed types against this set before inventing new ones, so general entities (people, organizations, places, events, creative works, media) converge on one canonical name and property shape. Domain packs may add narrower types; shared type names are deduplicated in favour of this base pack.
 
   '
 license: CC-BY-SA-3.0
