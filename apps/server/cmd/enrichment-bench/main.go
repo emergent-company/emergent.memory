@@ -88,12 +88,15 @@ type graphObject struct {
 type episodeScore struct {
 	Episode        string   `json:"episode"`
 	Expected       int      `json:"expected"`        // cumulative ground-truth entities
-	Found          int      `json:"found"`           // cumulative entities matched
-	Recall         float64  `json:"recall"`          // found / expected
+	Found          int      `json:"found"`           // cumulative entities matched (lenient)
+	FoundExact     int      `json:"found_exact"`     // cumulative entities matched by exact normalized name
+	Recall         float64  `json:"recall"`          // found / expected (lenient)
+	RecallExact    float64  `json:"recall_exact"`    // found_exact / expected
 	Objects        int      `json:"objects"`         // non-document graph objects
 	Unmatched      int      `json:"unmatched"`       // objects matching no ground-truth entity (may include real-but-unlisted entities)
 	Precision      float64  `json:"precision"`       // (objects - unmatched) / objects
 	DuplicateNames int      `json:"duplicate_names"` // ground-truth names mapped to >1 object
+	Edges          int      `json:"edges"`           // cumulative graph relationships
 	Types          []string `json:"types"`           // distinct object types observed
 }
 
@@ -112,13 +115,49 @@ func normalize(s string) string {
 }
 
 // matchEntity reports whether an object name and a ground-truth name refer to
-// the same entity (exact or one contains the other, after normalization).
+// the same entity. Matching is exact after normalization, or lenient: the
+// shorter name's tokens must form an ordered subset of the longer name's tokens
+// and the longer name may carry at most 2 extra tokens. That keeps "Central
+// Perk" matching "Central Perk coffeehouse" while rejecting "Carol" matching
+// "Carol and Ross's baby".
 func matchEntity(objName, gtName string) bool {
 	a, b := normalize(objName), normalize(gtName)
 	if a == "" || b == "" {
 		return false
 	}
-	return a == b || strings.Contains(a, b) || strings.Contains(b, a)
+	if a == b {
+		return true
+	}
+	at := strings.Fields(a)
+	bt := strings.Fields(b)
+	short, long := at, bt
+	if len(bt) < len(at) {
+		short, long = bt, at
+	}
+	if len(short) == 0 || len(long) == 0 {
+		return false
+	}
+	if len(long)-len(short) > 2 {
+		return false
+	}
+	return orderedSubset(short, long)
+}
+
+// exactMatch reports whether two names are identical after normalization.
+func exactMatch(objName, gtName string) bool {
+	a, b := normalize(objName), normalize(gtName)
+	return a != "" && a == b
+}
+
+// orderedSubset reports whether short appears as an in-order subsequence of long.
+func orderedSubset(short, long []string) bool {
+	i := 0
+	for _, t := range long {
+		if i < len(short) && short[i] == t {
+			i++
+		}
+	}
+	return i == len(short)
 }
 
 // isDocumentType reports whether an object type is a source-document type, which
@@ -130,13 +169,16 @@ func isDocumentType(t string) bool {
 }
 
 // scoreEpisode scores the graph objects against the cumulative ground truth.
-func scoreEpisode(epID string, cumulative []entity, objects []graphObject) episodeScore {
-	s := episodeScore{Episode: epID, Expected: len(cumulative)}
+func scoreEpisode(epID string, cumulative []entity, objects []graphObject, edges int) episodeScore {
+	s := episodeScore{Episode: epID, Expected: len(cumulative), Edges: edges}
 
-	// Map each ground-truth entity to the distinct object EntityIDs matching it.
-	byEntity := map[string]map[string]bool{} // gt name -> set of entity IDs
+	// Map each ground-truth entity to the distinct object EntityIDs matching it,
+	// separately for exact and lenient name matches.
+	byEntity := map[string]map[string]bool{}      // gt name -> set of entity IDs (lenient)
+	byEntityExact := map[string]map[string]bool{} // gt name -> set of entity IDs (exact)
 	for i := range cumulative {
 		byEntity[cumulative[i].Name] = map[string]bool{}
+		byEntityExact[cumulative[i].Name] = map[string]bool{}
 	}
 
 	entityCounted := map[string]bool{} // object entity IDs that matched a ground-truth name
@@ -152,16 +194,16 @@ func scoreEpisode(epID string, cumulative []entity, objects []graphObject) episo
 		if name == "" {
 			name = o.Key
 		}
-		matched := false
 		for _, e := range cumulative {
+			if exactMatch(name, e.Name) {
+				byEntityExact[e.Name][o.EntityID] = true
+			}
 			if matchEntity(name, e.Name) {
 				byEntity[e.Name][o.EntityID] = true
 				entityCounted[o.EntityID] = true
-				matched = true
 				break
 			}
 		}
-		_ = matched
 	}
 	s.Objects = nonDoc
 	s.Unmatched = nonDoc - len(entityCounted)
@@ -171,16 +213,19 @@ func scoreEpisode(epID string, cumulative []entity, objects []graphObject) episo
 		s.Precision = 1
 	}
 	for _, e := range cumulative {
-		ids := byEntity[e.Name]
-		if len(ids) > 0 {
+		if len(byEntity[e.Name]) > 0 {
 			s.Found++
 		}
-		if len(ids) > 1 {
+		if len(byEntityExact[e.Name]) > 0 {
+			s.FoundExact++
+		}
+		if len(byEntity[e.Name]) > 1 {
 			s.DuplicateNames++
 		}
 	}
 	if s.Expected > 0 {
 		s.Recall = float64(s.Found) / float64(s.Expected)
+		s.RecallExact = float64(s.FoundExact) / float64(s.Expected)
 	}
 	for t := range types {
 		s.Types = append(s.Types, t)
@@ -327,6 +372,23 @@ func fetchObjects(ctx context.Context, host, key, projectID string) ([]graphObje
 	return out.Items, nil
 }
 
+// fetchRelationshipCount returns the number of graph relationships (edges) in
+// the project, using the relationships/search endpoint's exact total. It falls
+// back to counting returned items if the total is omitted.
+func fetchRelationshipCount(ctx context.Context, host, key, projectID string) (int, error) {
+	var out struct {
+		Total int               `json:"total"`
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := doJSON("GET", host+"/api/graph/relationships/search?limit=500", key, projectID, nil, &out); err != nil {
+		return 0, err
+	}
+	if out.Total >= len(out.Items) {
+		return out.Total, nil
+	}
+	return len(out.Items), nil
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 type runRecord struct {
@@ -404,10 +466,15 @@ func main() {
 		if err != nil {
 			log.Fatalf("fetch objects %s: %v", ep.ID, err)
 		}
-		s := scoreEpisode(ep.ID, cumulative, objects)
+		edges, err := fetchRelationshipCount(ctx, *host, *apiKey, *projectID)
+		if err != nil {
+			log.Printf("  warning: fetch relationships %s: %v", ep.ID, err)
+			edges = 0
+		}
+		s := scoreEpisode(ep.ID, cumulative, objects, edges)
 		rec.Episodes = append(rec.Episodes, s)
-		log.Printf("  expected=%d found=%d recall=%.2f objects=%d unmatched=%d precision=%.2f duplicates=%d types=%v",
-			s.Expected, s.Found, s.Recall, s.Objects, s.Unmatched, s.Precision, s.DuplicateNames, s.Types)
+		log.Printf("  expected=%d found=%d (exact=%d) recall=%.2f (exact=%.2f) objects=%d unmatched=%d precision=%.2f duplicates=%d edges=%d types=%v",
+			s.Expected, s.Found, s.FoundExact, s.Recall, s.RecallExact, s.Objects, s.Unmatched, s.Precision, s.DuplicateNames, s.Edges, s.Types)
 	}
 
 	if err := appendLog(*logFile, rec); err != nil {

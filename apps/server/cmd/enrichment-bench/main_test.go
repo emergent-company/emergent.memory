@@ -9,11 +9,15 @@ func TestMatchEntity(t *testing.T) {
 	}{
 		{"Monica Geller", "Monica Geller", true},
 		{"monica geller", "Monica Geller", true},
-		{"Monica", "Monica Geller", true}, // substring
+		{"Monica", "Monica Geller", true}, // shorter name subset, one extra token
 		{"Monica Geller (chef)", "Monica Geller", true},
 		{"Central Perk", "Central Perk", true},
+		{"Central Perk coffeehouse", "Central Perk", true}, // one extra token
 		{"Phoebe", "Monica Geller", false},
 		{"Ross Geller", "Rachel Green", false},
+		{"Carol and Ross's baby", "Carol", false}, // four extra tokens over-matches
+		{"Carol", "Carol and Ross's baby", false}, // symmetric
+		{"Monica Geller", "Monica", true},         // symmetric of the lenient case
 	}
 	for _, c := range cases {
 		if got := matchEntity(c.obj, c.gt); got != c.want {
@@ -34,15 +38,21 @@ func TestScoreEpisode(t *testing.T) {
 		{EntityID: "b", Name: "Central Perk", Type: "Location"},
 		{EntityID: "doc", Name: "s01e01.txt", Type: "Document"},
 	}
-	s := scoreEpisode("s01e01", cumulative, objects)
+	s := scoreEpisode("s01e01", cumulative, objects, 5)
 	if s.Found != 2 || s.Recall != 1.0 {
 		t.Fatalf("recall = %v (%d/%d), want 1.0", s.Recall, s.Found, s.Expected)
+	}
+	if s.FoundExact != 2 || s.RecallExact != 1.0 {
+		t.Fatalf("exact recall = %v (%d/%d), want 1.0", s.RecallExact, s.FoundExact, s.Expected)
 	}
 	if s.Objects != 2 || s.Unmatched != 0 || s.Precision != 1.0 {
 		t.Fatalf("precision = %v (unmatched=%d objects=%d), want 1.0", s.Precision, s.Unmatched, s.Objects)
 	}
 	if s.DuplicateNames != 0 {
 		t.Fatalf("duplicates = %d, want 0", s.DuplicateNames)
+	}
+	if s.Edges != 5 {
+		t.Fatalf("edges = %d, want 5", s.Edges)
 	}
 }
 
@@ -56,9 +66,12 @@ func TestScoreEpisodeDuplicateAndHallucination(t *testing.T) {
 		{EntityID: "b", Name: "Monica", Type: "Character"},
 		{EntityID: "c", Name: "Zorg", Type: "Character"},
 	}
-	s := scoreEpisode("s01e01", cumulative, objects)
+	s := scoreEpisode("s01e01", cumulative, objects, 0)
 	if s.Found != 1 {
 		t.Fatalf("found = %d, want 1", s.Found)
+	}
+	if s.FoundExact != 1 || s.RecallExact != 1.0 {
+		t.Fatalf("found_exact = %d (recall %v), want 1/1.0", s.FoundExact, s.RecallExact)
 	}
 	if s.DuplicateNames != 1 {
 		t.Fatalf("duplicates = %d, want 1 (Monica + Monica Geller both match)", s.DuplicateNames)
@@ -72,7 +85,7 @@ func TestScoreEpisodeDuplicateAndHallucination(t *testing.T) {
 }
 
 func TestScoreEpisodeEmptyObjects(t *testing.T) {
-	s := scoreEpisode("s01e01", []entity{{Name: "X"}}, nil)
+	s := scoreEpisode("s01e01", []entity{{Name: "X"}}, nil, 0)
 	if s.Recall != 0 || s.Found != 0 {
 		t.Fatalf("recall = %v, want 0", s.Recall)
 	}
