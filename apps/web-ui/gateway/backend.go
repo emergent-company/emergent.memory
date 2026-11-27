@@ -274,6 +274,9 @@ type MemoryBackend interface {
 	MergeBranch(ctx context.Context, sourceBranchID, policy string) (*BranchMergeResult, error)
 	PreviewMergeBranch(ctx context.Context, sourceBranchID, policy string) (*BranchMergeResult, error)
 	GetCompiledTypes(ctx context.Context) (*CompiledSchemaTypes, error)
+	ListCatalog(ctx context.Context, q, category, parent string) (*CatalogList, error)
+	GetCatalogType(ctx context.Context, name string) (*CatalogTypeDetail, error)
+	InstallCatalog(ctx context.Context, types []string, replace bool) (*CatalogInstallResult, error)
 	// Schema discovery: the Schema page's card and the per-document trigger.
 	ListDiscoveryJobs(ctx context.Context) ([]discoveryJob, error)
 	StartProjectDiscovery(ctx context.Context) (*DiscoveryStartResult, error)

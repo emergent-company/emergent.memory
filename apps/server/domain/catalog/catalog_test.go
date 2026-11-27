@@ -226,3 +226,40 @@ func TestCosineSimilarity(t *testing.T) {
 	require.InDelta(t, 0.0, cosineSimilarity([]float32{1, 0}, []float32{0, 1}), 1e-9)
 	require.Equal(t, 0.0, cosineSimilarity(nil, []float32{1}))
 }
+
+func TestListFiltersAndFacets(t *testing.T) {
+	cat := loadCat(t)
+
+	all := List(cat, ListFilter{})
+	require.Equal(t, len(cat.Types), all.Total)
+	require.Len(t, all.Types, len(cat.Types))
+	require.NotEmpty(t, all.Categories)
+	require.Equal(t, cat.Version, all.Version)
+
+	media := List(cat, ListFilter{Category: "media"})
+	require.NotEmpty(t, media.Types)
+	for _, s := range media.Types {
+		require.Equal(t, "media", s.Category)
+	}
+
+	film := List(cat, ListFilter{Query: "film"})
+	require.True(t, hasSummary(film.Types, "Movie"))
+
+	subtypes := List(cat, ListFilter{Parent: "CreativeWork"})
+	require.True(t, hasSummary(subtypes.Types, "Movie"))
+	require.False(t, hasSummary(subtypes.Types, "Person"))
+
+	page := List(cat, ListFilter{Limit: 2, Offset: 1})
+	require.Equal(t, len(cat.Types), page.Total)
+	require.Len(t, page.Types, 2)
+	require.Equal(t, all.Types[1].Name, page.Types[0].Name)
+}
+
+func hasSummary(list []Summary, name string) bool {
+	for _, s := range list {
+		if s.Name == name {
+			return true
+		}
+	}
+	return false
+}
