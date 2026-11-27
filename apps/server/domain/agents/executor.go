@@ -3856,6 +3856,7 @@ func (ae *AgentExecutor) runPipeline(
 				slog.String("run_id", run.ID),
 				slog.Int("step", currentStep),
 				slog.Int("fenced_parts", fenceStats.FencedParts),
+				slog.Int("precapped_parts", fenceStats.PreCappedParts),
 				slog.Int("trusted_parts", fenceStats.TrustedParts),
 				slog.Int("bytes_before", fenceStats.BytesBefore),
 				slog.Int("bytes_after", fenceStats.BytesAfter),
