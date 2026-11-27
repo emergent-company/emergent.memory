@@ -45,6 +45,8 @@
 #         CHECK_REPO          git checkout (default: .)
 #         CHECK_HEAD          commit to compare against (default: CHECK_CURRENT_TAG
 #                             when it resolves, else HEAD)
+#         CHECK_DOCKER        docker binary used to read the two images'
+#                             configs (default: docker); tests inject a stub
 #       Signals for changed=false:
 #         1. CHECK_PREV_TAG must BE the previous release tag. A force-moved
 #            rolling tag (`cli-dev`, `connector-dev`, `mac-dev`, ...) is the #2087/0.88.0
@@ -60,6 +62,16 @@
 #         3. When the previous release's map exists, the digest recorded there
 #            for this service must equal CHECK_PREV_DIGEST (the digest about to
 #            be aliased), i.e. the previous tag was not moved after publication.
+#            The two digests are read through the map's per-service `image`,
+#            which is therefore part of what this signal needs; a map without
+#            one fails this signal rather than guessing the repository.
+#            A digest change is tolerated only when both manifests carry the
+#            same runtime configuration (Env, Labels, Entrypoint, Cmd,
+#            WorkingDir, ...): that is the same image re-stamped by a retried
+#            publisher, not a moved tag (#1203). A rebuild is not
+#            digest-stable — buildx stamps `created` and appends an attestation
+#            manifest — so after a publisher retry the tag legitimately points
+#            at a new digest while a container receives the identical image.
 #       A missing previous release/map degrades to the tree comparison and never
 #       fails the release; a disagreement never degrades.
 #
@@ -219,6 +231,7 @@ resolve_prev_tag() {
 # check_previous_map <service> <prev-release> <map-path> <alias-source-digest>
 check_previous_map() {
   local service="$1" prev_release="$2" map="$3" prev_digest="$4"
+  local docker="${CHECK_DOCKER:-docker}"
   if [ -z "$map" ]; then
     return 0
   fi
@@ -234,7 +247,7 @@ check_previous_map() {
     return 0
   fi
 
-  local recorded
+  local recorded image
   recorded="$(jq -r --arg s "$service" \
     '[.services[]? | select(.service == $s)][0] | .digest // empty' \
     "$map" 2>/dev/null || true)"
@@ -244,7 +257,36 @@ check_previous_map() {
   fi
 
   if [ -n "$prev_digest" ] && [ "$recorded" != "$prev_digest" ]; then
-    die "alias source digest ${prev_digest} != digest ${recorded} recorded for ${service} in ${map_tag:-the previous release}; the previous release tag moved after publication (#2111)."
+    image="$(jq -r --arg s "$service" \
+      '[.services[]? | select(.service == $s)][0] | .image // empty' \
+      "$map" 2>/dev/null || true)"
+
+    # #1203: a retried publisher rebuilds and re-pushes the same tags, and a
+    # rebuild is not digest-stable (buildx stamps `created` and appends an
+    # attestation manifest), so the tag's digest legitimately differs from the
+    # one the map recorded from the earlier attempt. The image a container gets
+    # is unchanged, so the alias is still the previous release's image. Compare
+    # the runtime configurations before concluding that the tag moved. Any ref
+    # that cannot be read keeps the failure: an unverifiable record is not
+    # evidence either way (#2111).
+    local compared=2
+    if [ -n "$image" ]; then
+      compared=0
+      same_image_config "$docker" "${image}@${recorded}" "${image}@${prev_digest}" \
+        || compared=$?
+    fi
+    if [ "$compared" -eq 0 ]; then
+      warn "alias source digest ${prev_digest} differs from the ${recorded} recorded for ${service} in ${map_tag:-the previous release}, but both images have the same runtime configuration: a retried publisher re-stamped the same build (#1203). Proceeding with the alias; regenerate the record with: gh workflow run release-versions.yml --field tag=${map_tag:-<previous-tag>}"
+      return 0
+    fi
+    if [ "$compared" -eq 2 ]; then
+      if [ -n "$image" ]; then
+        warn "cannot rule out a retried publisher for ${service}: the runtime configuration of ${image}@${recorded} could not be compared with ${image}@${prev_digest} (#1203)."
+      else
+        warn "cannot rule out a retried publisher for ${service}: the previous map records no image, so the runtime configuration of ${recorded} and ${prev_digest} cannot be compared (#1203)."
+      fi
+    fi
+    die "alias source digest ${prev_digest} != digest ${recorded} recorded for ${service} in ${map_tag:-the previous release}; the previous release tag moved after publication (#2111), or its publisher retried and re-pushed it from a rebuild whose image is not the same (#1203). Refusing to alias an image the record does not describe; if the two images are the same build, this check passes, otherwise regenerate the record with: gh workflow run release-versions.yml --field tag=${map_tag:-<previous-tag>}"
   fi
 }
 
@@ -584,6 +626,60 @@ inspect_digest() {
   local docker="$1" ref="$2" out
   out="$("$docker" buildx imagetools inspect --format '{{json .Manifest}}' "$ref" 2>/dev/null)" || return 1
   jq -er '.digest // empty' <<<"$out" 2>/dev/null
+}
+
+# inspect_config <docker> <ref>: print a canonical JSON object of the runtime
+# configuration of <ref>, or fail when it cannot be read.
+#
+# Only the fields a container actually receives are kept, with Env order
+# normalised (order is not meaningful, so a rebuild may reorder it). `created`,
+# `history`, `author` and the manifest's attestations are deliberately excluded:
+# a rebuild of identical inputs gets a new `created` stamp and a new manifest
+# digest, which is exactly the difference the retried-publisher tolerance must
+# see through (#1203). Anything else that differs (Env, Labels, Entrypoint,
+# Cmd, WorkingDir, ...) is a genuinely different image and still fails.
+#
+# `imagetools inspect --format '{{json .Image}}'` renders one config document
+# for a single-platform image and a map of platform -> document for a
+# multi-platform one (the server publishes amd64 + arm64), so both shapes are
+# normalised. A multi-platform image compares every platform's configuration,
+# keyed by platform: a digest change that re-stamped only one architecture is
+# still a different image. An unrecognised document is a failure, never an
+# empty object that would compare equal to another unrecognised one.
+inspect_config() {
+  local docker="$1" ref="$2" out
+  out="$("$docker" buildx imagetools inspect --format '{{json .Image}}' "$ref" 2>/dev/null)" || return 1
+  jq -S -c '
+    def runtime:
+      {user: .User,
+       exposed_ports: .ExposedPorts,
+       env: ((.Env // []) | sort),
+       entrypoint: .Entrypoint,
+       cmd: .Cmd,
+       volumes: .Volumes,
+       working_dir: .WorkingDir,
+       labels: .Labels,
+       stop_signal: .StopSignal};
+    if (.config | type) == "object" then
+      .config | runtime
+    elif type == "object" and length > 0 and all(.[]; (.config | type) == "object") then
+      map_values(.config | runtime) | to_entries | sort_by(.key) | from_entries
+    else
+      error("not an image config document")
+    end' <<<"$out" 2>/dev/null
+}
+
+# same_image_config <docker> <ref-a> <ref-b>
+#   0  both resolve and carry the same runtime configuration
+#   1  both resolve and differ (a genuinely different image)
+#   2  one of the refs could not be read, so nothing can be concluded
+same_image_config() {
+  local docker="$1" a b
+  a="$(inspect_config "$docker" "$2")" || return 2
+  b="$(inspect_config "$docker" "$3")" || return 2
+  [ -n "$a" ] && [ -n "$b" ] || return 2
+  [ "$a" = "$b" ] || return 1
+  return 0
 }
 
 # probe_tags <docker> <authoritative-ref> <authoritative-digest> <candidate>...

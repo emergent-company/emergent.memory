@@ -250,6 +250,134 @@ expect_rc "clean: moved previous tag (digest mismatch) fails" 1 \
   "$script" check
 expect_stderr "clean: digest mismatch names both digests" \
   "the previous release tag moved after publication"
+expect_stderr "clean: a map without an image says why it cannot compare" \
+  "the previous map records no image"
+
+# ---------------------------------------------------------------------------
+# Retried publisher (#1203). A publisher retry rebuilds and re-pushes the same
+# tags; a rebuild is not digest-stable (buildx stamps `created` and appends an
+# attestation manifest), so the tag's digest moves after the map recorded the
+# earlier attempt. The image a container receives is unchanged, so the next
+# release's alias is legitimate and must not be refused as a moved tag. The
+# tolerance is narrow: the runtime configurations must match, and an
+# unreadable digest still fails closed.
+# ---------------------------------------------------------------------------
+retry_map="$tmp/retry-map.json"
+cat >"$retry_map" <<'JSON'
+{
+  "schema_version": 1,
+  "release": {"tag": "v0.87.4", "version": "0.87.4", "commit": "deadbee"},
+  "previous_release": {"tag": "v0.87.3"},
+  "degraded": false,
+  "notes": [],
+  "services": [
+    {"service": "web-ui", "image": "ghcr.io/acme/memory-web-ui",
+     "version": "0.86.9", "version_source": "previous-map",
+     "digest": "sha256:attempt-1", "source": "aliased-from:v0.87.3"}
+  ]
+}
+JSON
+
+# A stub for `buildx imagetools inspect --format '{{json .Image}}'`: each ref
+# maps to the image config document the registry would return. The two attempts
+# differ only in `created` and in Env order, the way a rebuild of identical
+# inputs does; a third ref is a genuinely different image.
+mkdir -p "$tmp/config-bin"
+cat >"$tmp/config-bin/docker" <<'STUB'
+#!/usr/bin/env bash
+ref="${!#}"
+doc="$(awk -v r="$ref" '$1 == r { $1 = ""; sub(/^[ \t]+/, ""); print; exit }' "${FAKE_CONFIGS:?}")"
+if [ -z "$doc" ]; then
+  echo "not found: $ref" >&2
+  exit 1
+fi
+printf '%s\n' "$doc"
+STUB
+chmod +x "$tmp/config-bin/docker"
+
+configs="$tmp/configs.txt"
+: >"$tmp/empty-configs.txt"
+cat >"$configs" <<'EOF'
+ghcr.io/acme/memory-web-ui@sha256:attempt-1 {"created":"2026-11-01T18:50:01Z","config":{"User":"","Env":["PATH=/usr/local/bin","NODE_ENV=production"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{"org.opencontainers.image.version":"0.104.3"}}}
+ghcr.io/acme/memory-web-ui@sha256:attempt-2 {"created":"2026-11-01T18:52:11Z","config":{"User":"","Env":["NODE_ENV=production","PATH=/usr/local/bin"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{"org.opencontainers.image.version":"0.104.3"}}}
+ghcr.io/acme/memory-web-ui@sha256:other-build {"created":"2026-11-01T18:52:11Z","config":{"User":"","Env":["PATH=/usr/local/bin"],"Entrypoint":["/docker-entrypoint.sh"],"Cmd":["node","server.js"],"WorkingDir":"/app","Labels":{}}}
+EOF
+
+expect_rc "retry: a re-stamped identical image allows the alias" 0 \
+  env CHECK_REPO="$clean" CHECK_SERVICE=web-ui CHECK_PATH=apps/web-ui \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
+  CHECK_PREV_MAP="$retry_map" CHECK_PREV_DIGEST=sha256:attempt-2 \
+  CHECK_DOCKER="$tmp/config-bin/docker" FAKE_CONFIGS="$configs" \
+  "$script" check
+expect_stdout "retry: the alias still succeeds" "alias=ok service=web-ui previous=v0.87.4"
+expect_stderr "retry: the tolerance names the retried publisher" \
+  "retried publisher re-stamped the same build"
+expect_stderr "retry: the stale record's repair is printed" \
+  "gh workflow run release-versions.yml --field tag=v0.87.4"
+
+expect_rc "retry: a digest whose configuration differs still fails" 1 \
+  env CHECK_REPO="$clean" CHECK_SERVICE=web-ui CHECK_PATH=apps/web-ui \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
+  CHECK_PREV_MAP="$retry_map" CHECK_PREV_DIGEST=sha256:other-build \
+  CHECK_DOCKER="$tmp/config-bin/docker" FAKE_CONFIGS="$configs" \
+  "$script" check
+expect_stderr "retry: a different image is still blamed on a moved tag" \
+  "the previous release tag moved after publication"
+expect_stderr "retry: the failure names the other possible cause" \
+  "retried and re-pushed it from a rebuild whose image is not the same"
+
+# A digest the registry no longer answers for cannot be compared, so the
+# mismatch must keep failing closed rather than being assumed benign.
+expect_rc "retry: an unreadable recorded digest fails closed" 1 \
+  env CHECK_REPO="$clean" CHECK_SERVICE=web-ui CHECK_PATH=apps/web-ui \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
+  CHECK_PREV_MAP="$retry_map" CHECK_PREV_DIGEST=sha256:attempt-2 \
+  CHECK_DOCKER="$tmp/config-bin/docker" FAKE_CONFIGS="$tmp/empty-configs.txt" \
+  "$script" check
+expect_stderr "retry: the unreadable comparison is reported" \
+  "cannot rule out a retried publisher"
+
+# The server image is multi-platform, so `imagetools inspect` reports one config
+# document per platform rather than one document. A re-stamped build must pass
+# there too, and a difference on a single architecture must still fail.
+server_retry_map="$tmp/server-retry-map.json"
+cat >"$server_retry_map" <<'JSON'
+{
+  "schema_version": 1,
+  "release": {"tag": "v0.87.4", "version": "0.87.4", "commit": "deadbee"},
+  "previous_release": {"tag": "v0.87.3"},
+  "degraded": false,
+  "notes": [],
+  "services": [
+    {"service": "server", "image": "ghcr.io/acme/memory-server",
+     "version": "v0.86.9", "version_source": "previous-map",
+     "digest": "sha256:server-attempt-1", "source": "aliased-from:v0.87.3"}
+  ]
+}
+JSON
+server_configs="$tmp/server-configs.txt"
+cat >"$server_configs" <<'EOF'
+ghcr.io/acme/memory-server@sha256:server-attempt-1 {"linux/amd64":{"created":"2026-11-01T18:50:01Z","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]}},"linux/arm64":{"created":"2026-11-01T18:50:01Z","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]}}}
+ghcr.io/acme/memory-server@sha256:server-attempt-2 {"linux/amd64":{"created":"2026-11-01T18:52:11Z","config":{"User":"","Env":["MEMORY_ENV=production","PATH=/usr/local/bin"],"Entrypoint":["/usr/local/bin/memory-server"]}},"linux/arm64":{"created":"2026-11-01T18:52:11Z","config":{"User":"","Env":["MEMORY_ENV=production","PATH=/usr/local/bin"],"Entrypoint":["/usr/local/bin/memory-server"]}}}
+ghcr.io/acme/memory-server@sha256:server-arm-differs {"linux/amd64":{"created":"2026-11-01T18:52:11Z","config":{"User":"","Env":["PATH=/usr/local/bin","MEMORY_ENV=production"],"Entrypoint":["/usr/local/bin/memory-server"]}},"linux/arm64":{"created":"2026-11-01T18:52:11Z","config":{"User":"","Env":["PATH=/usr/local/bin"],"Entrypoint":["/usr/local/bin/memory-server"]}}}
+EOF
+
+expect_rc "retry: a multi-platform image re-stamped per platform allows the alias" 0 \
+  env CHECK_REPO="$clean" CHECK_SERVICE=server CHECK_PATH=apps/server \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
+  CHECK_PREV_MAP="$server_retry_map" CHECK_PREV_DIGEST=sha256:server-attempt-2 \
+  CHECK_DOCKER="$tmp/config-bin/docker" FAKE_CONFIGS="$server_configs" \
+  "$script" check
+expect_stdout "retry: the multi-platform alias succeeds" "alias=ok service=server previous=v0.87.4"
+
+expect_rc "retry: one architecture differing still fails" 1 \
+  env CHECK_REPO="$clean" CHECK_SERVICE=server CHECK_PATH=apps/server \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
+  CHECK_PREV_MAP="$server_retry_map" CHECK_PREV_DIGEST=sha256:server-arm-differs \
+  CHECK_DOCKER="$tmp/config-bin/docker" FAKE_CONFIGS="$server_configs" \
+  "$script" check
+expect_stderr "retry: the multi-platform failure names the moved tag" \
+  "the previous release tag moved after publication"
 
 # A map belonging to a different release is ignored, not applied to this one.
 wrong_map="$tmp/wrong-map.json"
