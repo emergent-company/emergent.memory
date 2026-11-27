@@ -182,6 +182,12 @@ type ToolResultFenceStats struct {
 	// value could not be normalised. Unreachable for a value the ADK can send;
 	// counted so a silent fail-open would be visible in the log.
 	NormalizeFailed int
+	// PreCappedParts counts untrusted results truncated to their per-result cap
+	// *before* being fenced (issue #1151). Fencing multiplies a payload made of
+	// many short strings several-fold, so a result the bound would truncate
+	// anyway is bounded first and only the truncated form is fenced; allocation
+	// then follows the cap, not the payload. BytesBefore counts their raw size.
+	PreCappedParts int
 	// BytesBefore and BytesAfter measure the fenced parts only.
 	BytesBefore int
 	BytesAfter  int
@@ -200,7 +206,35 @@ type ToolResultFenceStats struct {
 // the envelope is part of what the model reads, so the bound has to measure the
 // fenced form. Fencing last would let a payload of many short strings multiply
 // a capped result several-fold with envelope overhead nothing re-checks.
+//
+// This entry point has no per-result cap, so it fences every leaf of the payload
+// as it stands. applyModelContextBoundary uses
+// fenceModelRequestToolResultsWithPrecap instead, which bounds a result too large
+// to fence whole before fencing it (issue #1151).
 func fenceModelRequestToolResults(req *model.LLMRequest, trusted func(string) bool) ToolResultFenceStats {
+	return fenceModelRequestToolResultsWithPrecap(req, nil, trusted)
+}
+
+// fenceModelRequestToolResultsWithPrecap is fenceModelRequestToolResults with a
+// hard pre-cap for untrusted results too large to fence whole (issue #1151).
+//
+// precap resolves the per-result model-context cap for a tool name; nil means no
+// pre-cap. A non-nil precap returning a positive cap says: a result whose raw
+// JSON exceeds that cap is going to be truncated to it by
+// boundModelRequestToolResults anyway, so fence the *truncated* form instead of
+// materialising the envelope over the unbounded payload. That is what keeps
+// allocation proportional to the cap instead of to the payload — fencing
+// multiplies a payload of many short strings several-fold, and the
+// multiplication must not happen on megabytes the model never reads. The
+// pre-capped part is emitted as one envelope with a literal (harness-authored)
+// truncation marker, so the model still reads the harness's guidance as
+// guidance; the ordinary bound that runs afterwards sees a part already within
+// the cap and leaves it alone.
+//
+// A trusted result is never pre-capped: it is not fenced at all, and the
+// ordinary bound already caps it. The same is true of ToolResponse and
+// CodeExecutionResult parts, which this bound does not cover.
+func fenceModelRequestToolResultsWithPrecap(req *model.LLMRequest, precap func(string) int, trusted func(string) bool) ToolResultFenceStats {
 	var stats ToolResultFenceStats
 	if req == nil {
 		return stats
@@ -234,7 +268,22 @@ func fenceModelRequestToolResults(req *model.LLMRequest, trusted func(string) bo
 					stats.TrustedParts++
 					continue
 				}
-				stats.BytesBefore += jsonSize(resp)
+				rawSize := jsonSize(resp)
+				stats.BytesBefore += rawSize
+				if precap != nil {
+					if maxBytes := precap(name); maxBytes > 0 && rawSize > maxBytes {
+						fenced, ok := fenceAndBoundUntrustedResult(name, resp, maxBytes)
+						if !ok {
+							stats.NormalizeFailed++
+						} else {
+							stats.PreCappedParts++
+						}
+						part.FunctionResponse.Response = fenced
+						stats.BytesAfter += jsonSize(fenced)
+						stats.FencedParts++
+						continue
+					}
+				}
 				fenced, ok := fenceUntrustedResult(name, resp)
 				if !ok {
 					stats.NormalizeFailed++
@@ -298,6 +347,73 @@ func fenceUntrustedResult(source string, resp map[string]any) (fenced map[string
 		return resp, false
 	}
 	return fenceUntrustedMap(source, normMap), true
+}
+
+// fenceAndBoundUntrustedResult bounds and fences a result in one pass: the raw
+// JSON is truncated to maxBytes, the truncated text is wrapped in the
+// untrusted-content envelope, and the harness-authored truncation marker is left
+// outside that envelope so the model reads the harness's guidance literally.
+//
+// It exists for a result too large to fence whole (issue #1151). Fencing first
+// would materialise the envelope over the unbounded payload and multiply it
+// several-fold (every non-blank string leaf gains the tags, and a payload of
+// many short strings is exactly what an external server controls) before any cap
+// applied. Here the envelope is built from a bounded prefix, so the largest
+// allocation beyond the input itself is maxBytes.
+//
+// resp is never mutated. ok is false when resp cannot be encoded; the caller
+// hands it back untouched (the ADK could not send it either).
+func fenceAndBoundUntrustedResult(source string, resp map[string]any, maxBytes int) (map[string]any, bool) {
+	if resp == nil || maxBytes <= 0 {
+		return resp, false
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	// No HTML escaping: the preview is raw payload text, and defangUntrustedText
+	// — not the JSON encoder — decides how its delimiters are neutralised.
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(resp); err != nil {
+		return resp, false
+	}
+	encoded := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+	total := len(encoded)
+
+	okVal := any(true)
+	if v, ok := resp["ok"]; ok {
+		okVal = v
+	}
+
+	limit := maxBytes
+	for {
+		preview := safeUTF8Prefix(encoded, limit)
+		env := map[string]any{
+			"ok":         okVal,
+			"truncated":  true,
+			"truncation": fmt.Sprintf(truncationMarkerFmt, len(preview), total),
+			"preview":    wrapUntrusted(source, preview),
+		}
+		b, err := json.Marshal(env)
+		if err != nil {
+			return resp, false
+		}
+		if len(b) <= maxBytes {
+			return env, true
+		}
+		// Shrink the preview to make room for the envelope and marker overhead.
+		excess := len(b) - maxBytes
+		if len(preview) <= excess {
+			// No payload room left under the cap: keep the marker only. The
+			// envelope is fixed overhead and may itself exceed an absurdly small
+			// configured cap, exactly as boundToolResultResponse documents.
+			return map[string]any{
+				"ok":         okVal,
+				"truncated":  true,
+				"truncation": fmt.Sprintf(truncationMarkerFmt, 0, total),
+				"preview":    wrapUntrusted(source, ""),
+			}, true
+		}
+		limit = len(preview) - excess
+	}
 }
 
 // fenceUntrustedMap fences every value in m. Map keys are defanged but not

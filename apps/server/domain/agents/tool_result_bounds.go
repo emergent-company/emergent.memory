@@ -45,6 +45,15 @@ import (
 // the right direction: the alternative is a bound that does not count what the
 // model actually reads, which the same payload inflates past the budget, and the
 // part cut is the tail of content the model was going to be told to narrow.
+//
+// Fencing first must not mean fencing *unbounded*, though (issue #1151): the
+// fenced copy is materialised in memory, so a multi-megabyte payload of short
+// strings would drive allocation and GC proportional to its fenced form even
+// though the model only ever reads the cap. An untrusted result whose raw JSON
+// already exceeds its per-result cap is therefore truncated to that cap *before*
+// it is fenced (see fenceModelRequestToolResultsWithPrecap): the bound would cut
+// it anyway, so the truncated form is what gets enveloped and allocation follows
+// the cap rather than the payload.
 const (
 	// defaultToolResultMaxBytes bounds one tool result as seen by the model.
 	// 128 KiB is generous: normal read/search results observed in production
@@ -150,7 +159,7 @@ type ToolResultBoundStats struct {
 }
 
 // applyModelContextBoundary applies both model-context transformations to req in
-// place, in the only order that keeps them honest: fence first, bound second.
+// place, in the order that keeps them honest: fence first, bound second.
 //
 // Fencing is part of what the model reads, so the bound has to measure the
 // fenced form. Bounding first would let a payload made of many short strings —
@@ -158,8 +167,20 @@ type ToolResultBoundStats struct {
 // with envelope overhead that nothing re-checks, blowing the total budget. It
 // would also wrap the bound's own truncation/elision guidance, which the model
 // must read literally, in an untrusted envelope.
+//
+// The fence is given the per-result cap as a *pre-cap* (issue #1151): a result
+// too large to fence whole is truncated first and only the truncated form is
+// enveloped. That keeps the fenced intermediate proportional to the cap instead
+// of to the payload, while the ordinary bound below still measures the envelope
+// the model actually reads. When the per-result layer is disabled (negative
+// MaxBytes) there is no pre-cap: nothing would truncate the fenced form either,
+// so fencing whole is the only faithful behaviour.
 func applyModelContextBoundary(req *model.LLMRequest, bounds ToolResultBounds, trusted func(string) bool) (bound ToolResultBoundStats, fence ToolResultFenceStats) {
-	fence = fenceModelRequestToolResults(req, trusted)
+	var precap func(tool string) int
+	if bounds.MaxBytes >= 0 {
+		precap = bounds.maxBytesFor
+	}
+	fence = fenceModelRequestToolResultsWithPrecap(req, precap, trusted)
 	bound = boundModelRequestToolResults(req, bounds)
 	return bound, fence
 }
