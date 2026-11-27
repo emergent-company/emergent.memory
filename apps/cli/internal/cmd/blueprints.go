@@ -1075,10 +1075,11 @@ types reconciles and activates deferred relationships.
 Type names may be passed positionally or with repeated --type flags.
 
 A project keeps one type per name, so a catalog type whose name another pack
-already provides is refused: installing it would merge the catalog's properties
-into that pack's type instead of creating a second one. The error names the
-conflicting types and their packs; pass those names with --extend to accept the
-merge deliberately (only the named types merge, nothing else).
+already provides is refused: a project resolves one type per name from the
+newest install, so installing it would replace that pack's definition with the
+catalog's and move the type to the catalog pack. The error names the conflicting
+types and their packs; pass those names with --extend to accept that deliberately
+(only the named types are taken over, nothing else).
 
 Examples:
 
@@ -1159,7 +1160,7 @@ func runBlueprintsCatalogInstall(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(out, "Removed (%d, relationships to these deactivated): %s\n", len(res.Removed), strings.Join(res.Removed, ", "))
 	}
 	if len(res.Merged) > 0 {
-		_, _ = fmt.Fprintf(out, "Merged into existing types (catalog properties added; existing definitions win): %s\n", strings.Join(res.Merged, ", "))
+		_, _ = fmt.Fprintf(out, "Taken over from another pack (the catalog's definition is now live and the catalog pack owns them): %s\n", strings.Join(res.Merged, ", "))
 	}
 	if len(res.Deferred) > 0 {
 		fmt.Fprintf(out, "Deferred (%d, install the missing endpoint to activate): %s\n", len(res.Deferred), strings.Join(res.Deferred, ", "))
@@ -1392,7 +1393,7 @@ func init() {
 
 	// catalog-install flags
 	blueprintsCatalogInstallCmd.Flags().StringArrayVar(&blueprintsCatalogTypesFlag, "type", nil, "Catalog type to install (repeatable, e.g. --type Movie)")
-	blueprintsCatalogInstallCmd.Flags().StringArrayVar(&blueprintsCatalogExtendFlag, "extend", nil, "Requested type to merge into a same-named type another pack already provides (repeatable; the install is refused without it, and only the named types merge)")
+	blueprintsCatalogInstallCmd.Flags().StringArrayVar(&blueprintsCatalogExtendFlag, "extend", nil, "Requested type to install under the catalog's definition even though another pack provides the name (repeatable; refused without it, and the catalog pack then owns the named types)")
 	blueprintsCatalogInstallCmd.Flags().StringVar(&blueprintsCatalogNameFlag, "name", "", "Project schema pack name (default schemaorg-catalog)")
 	blueprintsCatalogInstallCmd.Flags().StringVar(&blueprintsCatalogVersionFlag, "version", "", "Project schema pack version (default 1.0.0)")
 	blueprintsCatalogInstallCmd.Flags().BoolVar(&blueprintsCatalogReplaceFlag, "replace", false, "Make the named types authoritative; remove catalog types not listed (deactivates their relationships)")

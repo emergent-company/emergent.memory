@@ -1885,10 +1885,11 @@ types reconciles and activates deferred relationships.
 Type names may be passed positionally or with repeated --type flags.
 
 A project keeps one type per name, so a catalog type whose name another pack
-already provides is refused: installing it would merge the catalog's properties
-into that pack's type instead of creating a second one. The error names the
-conflicting types and their packs; pass those names with --extend to accept the
-merge deliberately (only the named types merge, nothing else).
+already provides is refused: a project resolves one type per name from the
+newest install, so installing it would replace that pack's definition with the
+catalog's and move the type to the catalog pack. The error names the conflicting
+types and their packs; pass those names with --extend to accept that deliberately
+(only the named types are taken over, nothing else).
 
 Examples:
 
@@ -1906,7 +1907,7 @@ memory blueprints catalog-install [type ...] [flags]
 ### Options
 
 ```
-      --extend stringArray   Requested type to merge into a same-named type another pack already provides (repeatable; the install is refused without it, and only the named types merge)
+      --extend stringArray   Requested type to install under the catalog's definition even though another pack provides the name (repeatable; refused without it, and the catalog pack then owns the named types)
   -h, --help                 help for catalog-install
       --name string          Project schema pack name (default schemaorg-catalog)
       --replace              Make the named types authoritative; remove catalog types not listed (deactivates their relationships)

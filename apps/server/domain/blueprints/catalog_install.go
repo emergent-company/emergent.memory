@@ -50,10 +50,15 @@ type CatalogTypeConflict struct {
 // (deactivating their relationships); graph objects are untouched.
 //
 // A requested type whose name another pack already provides is refused unless
-// it is named in extend: the platform keeps one type per name, so "installing"
-// it would additively merge the catalog's properties into the other pack's type
-// (existing definitions win) while ownership stays with that pack. extend makes
-// that merge an explicit, per-type request instead of an implicit side effect.
+// it is named in extend. The platform keeps one type per name and resolves it
+// from the newest assignment, so installing such a name replaces the live
+// definition with the catalog's declaration and moves the type to the catalog
+// pack: the other pack's version is shadowed, and a later replace treats the
+// name as a catalog type. Property definitions both declare keep the existing
+// one (the registry schema is merged additively), but properties only the other
+// pack declared are not part of the catalog's definition. extend makes that
+// takeover an explicit, per-type request instead of a side effect of naming a
+// type the project already has.
 func (s *Service) InstallCatalog(ctx context.Context, projectID, userID string, requested []string, opts CatalogPackOptions, replace bool, extend []string) (*CatalogInstallResult, error) {
 	if projectID == "" {
 		return nil, apperror.NewBadRequest("project id is required")
@@ -249,14 +254,14 @@ func catalogExtendUnknown(extend, requested []string) []string {
 }
 
 // catalogConflictMessage names every refused type and its owning pack, and the
-// flag that accepts the merge.
+// flag that accepts the takeover.
 func catalogConflictMessage(conflicts []CatalogTypeConflict) string {
 	parts := make([]string, 0, len(conflicts))
 	for _, c := range conflicts {
 		parts = append(parts, fmt.Sprintf("%s (already provided by pack %q)", c.Name, c.OwnerPack))
 	}
 	return fmt.Sprintf(
-		"catalog types not installed: %s — a project keeps one type per name, so the catalog definition would merge its properties into the existing type; list the names in \"extend\" to merge deliberately",
+		"catalog types not installed: %s — a project keeps one type per name and resolves it from the newest install, so installing it would replace that pack's definition with the catalog's; list the names in \"extend\" to install the catalog's definition deliberately",
 		strings.Join(parts, ", "))
 }
 
@@ -353,10 +358,13 @@ type CatalogInstallRequest struct {
 	// Replace makes Types authoritative: catalog types omitted from Types are
 	// removed from the pack, deactivating their relationships.
 	Replace bool `json:"replace,omitempty"`
-	// Extend names requested types the caller accepts merging into a type
-	// another pack already provides. Without it such a request is refused: the
-	// project keeps one type per name, so the catalog's properties would be
-	// added to the existing type (existing definitions win) rather than
-	// installing a catalog-owned one.
+	// Extend names requested types the caller accepts installing under the
+	// catalog's definition even though another pack already provides the name.
+	// Without it such a request is refused: the project resolves one type per
+	// name from the newest install, so installing the name replaces the live
+	// definition with the catalog's declaration and moves the type to the
+	// catalog pack. The registry schema is merged additively (existing property
+	// definitions win), but properties only the other pack declared are not
+	// part of the catalog's version.
 	Extend []string `json:"extend,omitempty"`
 }

@@ -90,6 +90,10 @@ func TestCatalogTypeConflicts(t *testing.T) {
 	got = catalogTypeConflicts(compiled, catalogTypes, []string{"Person", "Event", "Movie"}, "schemaorg-catalog", map[string]bool{"Person": true})
 	require.Equal(t, []CatalogTypeConflict{{Name: "Event", OwnerPack: "personal-memory"}}, got)
 
+	// A type the catalog pack already owns is a reconcile, not a conflict: the
+	// additive re-run path names the same types again.
+	require.Nil(t, catalogTypeConflicts(compiled, catalogTypes, []string{"Movie"}, "schemaorg-catalog", nil))
+
 	require.Nil(t, catalogTypeConflicts(nil, catalogTypes, []string{"Person"}, "schemaorg-catalog", nil))
 }
 
@@ -106,6 +110,9 @@ func TestCatalogConflictMessageNamesTheOwnerAndTheEscapeHatch(t *testing.T) {
 	})
 	require.Contains(t, msg, "Organization (already provided by pack \"personal-memory\")")
 	require.Contains(t, msg, "Person (already provided by pack \"personal-memory\")")
+	// The consequence is a takeover of the name, not a property merge: the
+	// compiled view resolves a type from the newest install.
+	require.Contains(t, msg, "replace that pack's definition with the catalog's")
 	require.Contains(t, msg, `"extend"`)
 }
 

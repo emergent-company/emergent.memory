@@ -195,7 +195,7 @@ templ SchemaCatalogTypePage(view *SchemaCatalogTypeView, loadErr error) {
 						<div class="rounded-box border border-warning/40 bg-warning/5 px-4 py-3" data-testid="catalog-provided-by">
 							<p class="text-sm font-medium">This project already has a type named { t.Name }</p>
 							@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
-								It is provided by <span class="font-mono">{ v.State.ProvidedLabel() }</span>, so that pack's definition is the live one: the properties above describe the catalog's own declaration, not the project's type. Because a project keeps one type per name, a catalog type is offered for install only when the name is free — installing this name would merge the catalog's properties into the existing type instead.
+								It is provided by <span class="font-mono">{ v.State.ProvidedLabel() }</span>, so that pack's definition is the live one: the properties above describe the catalog's own declaration, not the project's type. Because a project resolves one type per name from the newest install, a catalog type is offered for install only when the name is free — installing this name would replace the existing definition with the catalog's.
 							}
 							<a class="mt-2 inline-block text-xs font-medium text-primary hover:underline" href={ templ.URL(objectTypeHref(t.Name)) }>View the project type</a>
 						</div>

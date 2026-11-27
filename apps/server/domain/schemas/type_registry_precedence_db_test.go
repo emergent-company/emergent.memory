@@ -379,11 +379,16 @@ func TestAssignPackMergeTypesMergesOnlyNamedTypes(t *testing.T) {
 	assert.ElementsMatch(t, []string{"Person"}, res.MergedTypes)
 	assert.ElementsMatch(t, []string{"Event"}, res.SkippedTypes)
 
-	_, person := registryRowAndOwner(t, ctx, db, projectID, "Person")
+	personOwner, person := registryRowAndOwner(t, ctx, db, projectID, "Person")
 	assert.Contains(t, propsOf(t, person), "legal_name", "the named type merges additively")
+	// Accepting a collision takes the name over: the compiled view resolves a
+	// type from the newest assignment, so the incoming pack defines it and a
+	// later replace of that pack owns the name. The docs say so; this pins it.
+	assert.Equal(t, "ot-other", personOwner)
 
-	_, event := registryRowAndOwner(t, ctx, db, projectID, "Event")
+	eventOwner, event := registryRowAndOwner(t, ctx, db, projectID, "Event")
 	assert.NotContains(t, propsOf(t, event), "starts_at", "an unnamed collision still skips")
+	assert.Equal(t, "ot-base", eventOwner, "an unaccepted collision keeps its owner")
 }
 
 // TestAssignPackCrossScopeSameNameForkRequiresMerge is the #338 regression: a

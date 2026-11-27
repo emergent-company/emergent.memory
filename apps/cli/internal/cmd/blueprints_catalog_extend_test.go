@@ -113,7 +113,7 @@ func TestCatalogInstallSendsExtendAndReportsMerged(t *testing.T) {
 	} else if names, ok := got.([]any); !ok || len(names) != 1 || names[0] != "Organization" {
 		t.Errorf("extend = %#v, want [Organization]", got)
 	}
-	if !strings.Contains(out, "Merged into existing types") || !strings.Contains(out, "Organization") {
+	if !strings.Contains(out, "Taken over from another pack") || !strings.Contains(out, "Organization") {
 		t.Errorf("output does not report the merge: %q", out)
 	}
 }
