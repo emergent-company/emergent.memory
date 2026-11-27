@@ -665,6 +665,15 @@ type MCPConfig struct {
 	// is soft: the most recent result is never elided, so a single newest result
 	// larger than the budget is retained whole. A negative value disables it.
 	ToolResultTotalBudgetBytes int `env:"MCP_TOOL_RESULT_TOTAL_BUDGET_BYTES" envDefault:"524288"`
+
+	// RequireProjectSwitch makes the project MCP transports refuse write tools
+	// until the client has explicitly selected the session's active project with
+	// `project` action=use (issue #1163). It exists so an agent can never write
+	// to whatever project the session happened to start on — a reverse-proxy
+	// pinned default, a project-bound token, or a personal default — by accident.
+	// Reads remain available, and `project` action=list/use are always allowed.
+	// Default: false (preserves existing clients).
+	RequireProjectSwitch bool `env:"MCP_REQUIRE_PROJECT_SWITCH" envDefault:"false"`
 }
 
 // StandaloneConfig holds configuration for standalone minimal deployment mode

@@ -177,6 +177,7 @@ Table "core"."oauth_grants" {
   "created_at" timestamptz [not null, default: `now()`]
   "last_used_at" timestamptz
   "revoked_at" timestamptz
+  "project_scope" text [not null, default: 'project', note: 'Consent model recorded at authorize time: project (bound to project_id) or account (may switch to any project the owning user belongs to)']
 
   Indexes {
     (client_id) [name: "idx_oauth_grants_client_id"]

@@ -144,6 +144,10 @@ func (f *fakeStore) ListGrantsByUser(_ context.Context, userID string) ([]grantR
 			UserID: g.UserID, ProjectID: g.ProjectID, ProjectName: f.projects[g.ProjectID],
 			Scopes: g.Scopes, TokenID: g.TokenID, CreatedAt: g.CreatedAt,
 			LastUsedAt: g.LastUsedAt, RevokedAt: g.RevokedAt,
+			// Mirror the real read model: ListGrantsByUser selects
+			// g.project_scope, so a fake that dropped it would hide a DTO
+			// regression (the Connected-apps page labels the project from it).
+			ProjectScope: g.ProjectScope,
 		})
 	}
 	return rows, nil
