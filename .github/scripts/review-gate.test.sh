@@ -212,6 +212,27 @@ else
   ok "a comment carrying MERGE and a rejection rejects"
 fi
 
+# 13. Trailing whitespace after the verdict must not turn an approval into a
+#     rejection (#1206 review). The first cut's greedy capture absorbed it,
+#     `^MERGE$` then failed, and the gate disarmed a bot approval.
+run_case "$BOT" MEMBER 357094646 "$(printf 'Reviewed-SHA: %s\nVerdict: MERGE   \n' "$HEAD")" \
+  BOT_LOGINS="$BOT" TRUSTED_IDS="$ALLOW"
+if ((status != 0)) || ! armed || disarmed; then
+  bad "a verdict with trailing whitespace still arms (exit ${status})"
+else
+  ok "a verdict with trailing whitespace still arms"
+fi
+
+# 14. A padded SHA line still matches, and a multi-word verdict still rejects --
+#     the class the old awk allowed, with its tail trimmed rather than captured.
+run_case "$BOT" MEMBER 357094646 "$(printf 'Reviewed-SHA: %s  \nVerdict: CHANGES REQUESTED\n' "$HEAD")" \
+  BOT_LOGINS="$BOT" TRUSTED_IDS="$ALLOW"
+if ((status != 0)) || armed || ! disarmed; then
+  bad "a multi-word verdict with a padded SHA line rejects (exit ${status})"
+else
+  ok "a multi-word verdict with a padded SHA line rejects"
+fi
+
 if ((fail)); then
   printf 'review-gate_test: FAILED\n' >&2
   exit 1

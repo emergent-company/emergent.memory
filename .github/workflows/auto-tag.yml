@@ -56,6 +56,24 @@ jobs:
     # dispatches this workflow only for a merge that touched VERSION (#1363).
     if: ${{ github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip release]') }}
     steps:
+      # `workflow_dispatch` can name any ref, and tagging is a write to the
+      # release namespace: `gh workflow run auto-tag.yml --ref <branch>` (the
+      # command `scripts/preflight/release-tag.sh` prints) would otherwise tag
+      # and push `vX.Y.Z` from an unmerged tree with `contents: write`, starting
+      # the whole fan-out. A push event is already filtered to `main`, so this
+      # only ever refuses a mistaken dispatch -- and it refuses rather than
+      # silently skipping, because a `--ref main` typo must not look like a
+      # green run.
+      - name: Refuse a dispatch outside the release branch
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
+        env:
+          # Through `env`, never interpolated into the shell text: a ref name may
+          # contain characters a shell would act on.
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          echo "::error::auto-tag tags the release branch (main); this dispatch was for '${DISPATCH_REF}'. Re-dispatch with --ref main."
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
