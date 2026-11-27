@@ -245,3 +245,166 @@ func TestA2UITeardownEvents_UpdateComponentsOnly(t *testing.T) {
 		t.Fatalf("teardown surfaceId = %q / %q, want %q", evs[0].SurfaceID, evs[0].A2UI[0].DeleteSurface.SurfaceID, s.SurfaceID())
 	}
 }
+
+// a2uiHasID reports whether ids contains id.
+func a2uiHasID(ids []string, id string) bool {
+	for _, got := range ids {
+		if got == id {
+			return true
+		}
+	}
+	return false
+}
+
+func TestA2UIStepStreams_AbandonedSurfaceIsWithdrawnWhenTheStepEnds(t *testing.T) {
+	// The shape #621 describes: a step streams a card, then ends in a tool call
+	// so IsFinalResponse() never fires for it, and the run continues with a new
+	// step. With per-run/per-step scoping the next step's card gets a new id, so
+	// it no longer supersedes the half-rendered one: only an explicit teardown
+	// keeps the orphan off screen.
+	const (
+		create = "```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}\n"
+		update = "{\"updateComponents\":{\"surfaceId\":\"s1\",\"components\":[{\"id\":\"p1\",\"component\":\"proposal\",\"kind\":\"change\",\"summary\":\"hi\"}]}}\n"
+		closer = "```\n"
+	)
+
+	stage := newA2UIStepStreams("run-1")
+	throttle := newA2UIFrameThrottle(0) // never throttle
+
+	var opened, finalised, withdrawn []string
+	emit := func(evs []StreamEvent) {
+		for _, ev := range evs {
+			if ev.Type != StreamEventA2UI {
+				continue
+			}
+			if ev.Final {
+				finalised = append(finalised, ev.SurfaceID)
+			}
+			for _, m := range ev.A2UI {
+				switch {
+				case m.CreateSurface != nil:
+					opened = append(opened, ev.SurfaceID)
+				case m.DeleteSurface != nil:
+					withdrawn = append(withdrawn, ev.SurfaceID)
+				}
+			}
+		}
+	}
+
+	// Step 0: a partial surface is in flight when the step ends in a tool call.
+	emit(stage.beginStep(0))
+	emit(a2uiProgressiveEvents(stage.stream, throttle, create+update))
+	if len(opened) != 1 {
+		t.Fatalf("step 0 opened %v, want one surface", opened)
+	}
+	orphan := opened[0]
+	if orphan != a2uiNamespace("run-1", 0)+":s1" {
+		t.Fatalf("step 0 surface = %q, want the step-0 scope", orphan)
+	}
+
+	// Step 1 begins: the orphan must be withdrawn before the new step streams,
+	// or it stays on screen for the rest of the run.
+	emit(stage.beginStep(1))
+	if len(withdrawn) != 1 || withdrawn[0] != orphan {
+		t.Fatalf("withdrawn = %v, want [%s] before step 1 streams", withdrawn, orphan)
+	}
+	if got := stage.stream.SurfaceID(); got != "" {
+		t.Fatalf("step 1 stream already carries surface %q, want empty", got)
+	}
+
+	// Step 1's card is a different id — it does not replace the orphan.
+	finalEvents := finalResponseStreamEvents([]*genai.Part{{Text: create + update + closer}})
+	namespaceA2UIEvents(finalEvents, a2uiNamespace("run-1", 1))
+	emit(finalEvents)
+	emit(a2uiTeardownEvents(stage.stream, finalEvents))
+	stage.resetStep()
+
+	// Run end.
+	emit(stage.withdraw())
+
+	// Every surface the client was shown a createSurface for either received its
+	// authoritative final frame or was explicitly torn down: no orphan remains.
+	for _, id := range opened {
+		if !a2uiHasID(finalised, id) && !a2uiHasID(withdrawn, id) {
+			t.Fatalf("surface %q was shown but never finalised or withdrawn (opened=%v finalised=%v withdrawn=%v)",
+				id, opened, finalised, withdrawn)
+		}
+	}
+	// The final card itself is not torn down.
+	for _, id := range finalised {
+		if a2uiHasID(withdrawn, id) {
+			t.Fatalf("finalised surface %q was withdrawn", id)
+		}
+	}
+	if len(finalised) != 1 {
+		t.Fatalf("finalised = %v, want the one final frame", finalised)
+	}
+}
+
+func TestA2UIStepStreams_RunEndWithdrawsTheLastAbandonedSurface(t *testing.T) {
+	stage := newA2UIStepStreams("run-2")
+	stage.beginStep(0)
+	a2uiProgressiveEvents(stage.stream, nil,
+		"```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}\n")
+	shown := stage.stream.SurfaceID()
+	if shown == "" {
+		t.Fatal("no surface was staged")
+	}
+
+	evs := stage.withdraw()
+	if len(evs) != 1 || evs[0].Type != StreamEventA2UI || len(evs[0].A2UI) != 1 || evs[0].A2UI[0].DeleteSurface == nil {
+		t.Fatalf("withdraw = %+v, want one deleteSurface A2UI event", evs)
+	}
+	if evs[0].SurfaceID != shown || evs[0].A2UI[0].DeleteSurface.SurfaceID != shown {
+		t.Fatalf("withdraw id = %q / %q, want %q", evs[0].SurfaceID, evs[0].A2UI[0].DeleteSurface.SurfaceID, shown)
+	}
+
+	// The stage forgets a surface it has withdrawn, so a second teardown (an
+	// explicit one plus the defer, for example) never resends the frame.
+	if evs := stage.withdraw(); evs != nil {
+		t.Fatalf("second withdraw = %+v, want nil", evs)
+	}
+}
+
+func TestA2UIStepStreams_FinalisedSurfaceIsNotWithdrawn(t *testing.T) {
+	const block = "```a2ui\n" +
+		`{"createSurface":{"surfaceId":"s1","catalogId":"memory-basic"}}` + "\n" +
+		`{"updateComponents":{"surfaceId":"s1","components":[{"id":"r1","component":"result","rows":[]}]}}` + "\n" +
+		"```\n"
+
+	stage := newA2UIStepStreams("run-3")
+	stage.beginStep(0)
+	if evs := a2uiProgressiveEvents(stage.stream, nil, block); len(evs) != 1 {
+		t.Fatalf("progressive frames = %d, want 1", len(evs))
+	}
+
+	finalEvents := finalResponseStreamEvents([]*genai.Part{{Text: block}})
+	namespaceA2UIEvents(finalEvents, a2uiNamespace("run-3", 0))
+	if evs := a2uiTeardownEvents(stage.stream, finalEvents); evs != nil {
+		t.Fatalf("teardown of a finalised surface = %+v, want nil", evs)
+	}
+	stage.resetStep()
+	if evs := stage.withdraw(); evs != nil {
+		t.Fatalf("run end withdrew a finalised surface: %+v", evs)
+	}
+}
+
+func TestA2UIStepStreams_KeepsTheStreamWithinOneStep(t *testing.T) {
+	stage := newA2UIStepStreams("run-4")
+	if evs := stage.beginStep(0); evs != nil {
+		t.Fatalf("first beginStep withdrew %+v, want nil", evs)
+	}
+	a2uiProgressiveEvents(stage.stream, nil,
+		"```a2ui\n{\"createSurface\":{\"surfaceId\":\"s1\",\"catalogId\":\"memory-basic\"}}\n")
+	staged := stage.stream
+	// Progress within one step must not be mistaken for leaving it.
+	if evs := stage.beginStep(0); evs != nil {
+		t.Fatalf("same-step beginStep withdrew %+v, want nil", evs)
+	}
+	if stage.stream != staged {
+		t.Fatal("same-step beginStep replaced the stream")
+	}
+	if got := stage.stream.SurfaceID(); got != a2uiNamespace("run-4", 0)+":s1" {
+		t.Fatalf("staged surface = %q, want the step-0 scope", got)
+	}
+}
