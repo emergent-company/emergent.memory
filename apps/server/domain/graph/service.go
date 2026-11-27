@@ -4970,8 +4970,11 @@ func buildExtractionBacklogResponse(branches []*PendingExtractionBranch, mainGra
 // in bounded batches. It is an explicit, manual action: Execute defaults to
 // false (dry run), and the merge policy is fixed to "partial" — clean additions
 // and fast-forwards are applied while conflicts and near-duplicates stay on the
-// branch for review. It therefore never discards data and never changes the
-// default behaviour for a project that has not asked for it.
+// branch for review. An object that shares its (type, namespace, key) identity
+// with a target head is the same entity re-extracted, not a near-duplicate, so
+// it is merged onto that target entity rather than left for review (#1186). It
+// therefore never discards data and never changes the default behaviour for a
+// project that has not asked for it.
 func (s *Service) MergeExtractionBacklog(ctx context.Context, projectID uuid.UUID, req *ExtractionBacklogMergeRequest) (*ExtractionBacklogMergeResponse, error) {
 	if req == nil {
 		req = &ExtractionBacklogMergeRequest{}
@@ -5111,23 +5114,15 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		summary.Status, summary.Conflicts = classifyMergeObject(sourceHead, targetHead)
 
 		// Deterministic same-entity detection (exact key). A source object that
-		// would be "added" (new canonical ID) but shares a normalized type+key
-		// with an existing target head is the same entity extracted from a
-		// different document. Reclassify it as "similar" with a deterministic
-		// score so the existing similarity policy (and the provenance union)
-		// applies. This is independent of embeddings: it runs before and
-		// regardless of the embedding-driven similarity probe below.
-		if summary.Status == "added" {
-			if same := findSameEntityTargetInIndex(sourceHead, sameEntityIndex); same != nil {
-				summary.Status = "similar"
-				summary.SimilarityScore = 1.0
-				cid := same.CanonicalID
-				summary.SimilarTargetID = &cid
-				if same.Name != nil {
-					summary.SimilarTargetName = *same.Name
-				}
-			}
-		}
+		// would be "added" (new canonical ID) but shares a normalized
+		// type+namespace+key with an existing target head is the same entity
+		// extracted from a different document. Reclassify it against that head
+		// so the merge
+		// treats it as a new version of the target entity (unchanged /
+		// fast_forward / conflict) instead of leaving a permanent "similar"
+		// duplicate for review (#1186). This is independent of embeddings: it
+		// runs before and regardless of the embedding-driven similarity probe.
+		applySameEntityMatch(summary, sourceHead, findSameEntityTargetInIndex(sourceHead, sameEntityIndex))
 
 		switch summary.Status {
 		case "merged":
@@ -5520,6 +5515,34 @@ func (s *Service) applyMerge(
 	for _, summary := range objectSummaries {
 		cid := summary.CanonicalID
 
+		// targetCanonicalID is the target-branch canonical this source object
+		// merges into. It equals cid for an ordinary merge; for an exact
+		// (type, namespace, key) identity match the source has a different
+		// canonical_id and the merge writes onto the existing target entity
+		// instead (#1186).
+		targetCanonicalID := cid
+		sameEntity := summary.SameEntityTargetID != nil
+		if sameEntity {
+			targetCanonicalID = *summary.SameEntityTargetID
+			// Relationships that reference the source entity must resolve to the
+			// surviving target entity once the branch is absorbed.
+			canonicalIDMap[cid] = targetCanonicalID
+		}
+
+		// stampMergedLedger records on the source row that its canonical was
+		// absorbed by the target canonical. Only exact-identity matches need it:
+		// an ordinary merge keeps the same canonical on both sides.
+		stampMergedLedger := func(srcID uuid.UUID) error {
+			if _, err := tx.NewUpdate().
+				Model((*GraphObject)(nil)).
+				Set("merged_to_canonical_id = ?", targetCanonicalID).
+				Where("id = ?", srcID).
+				Exec(ctx); err != nil {
+				return fmt.Errorf("stamp merged_to on object %s: %w", cid, err)
+			}
+			return nil
+		}
+
 		switch summary.Status {
 		case "added":
 			src := sourceObjects[cid]
@@ -5601,12 +5624,18 @@ func (s *Service) applyMerge(
 			if src == nil {
 				continue
 			}
-			// Fetch the current HEAD on the target branch to use as prevHead
-			prevHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, cid, targetBranchID)
+			// Fetch the current HEAD on the target branch to use as prevHead.
+			// For a same-entity match this is the existing target canonical, not
+			// the source's own canonical_id.
+			prevHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, targetCanonicalID, targetBranchID)
 			if err != nil {
-				return 0, fmt.Errorf("get target head for fast-forward %s: %w", cid, err)
+				return 0, fmt.Errorf("get target head for fast-forward %s: %w", targetCanonicalID, err)
 			}
 			labels := src.Labels
+			if sameEntity {
+				// A re-extraction must not drop labels curated on the target.
+				labels = unionLabels(prevHead.Labels, src.Labels)
+			}
 			if labels == nil {
 				labels = []string{}
 			}
@@ -5614,6 +5643,21 @@ func (s *Service) applyMerge(
 			// provenance with the target head's so a fast-forward never drops
 			// prior sources from other documents.
 			props := mergeProvenanceProps(prevHead.Properties, src.Properties)
+			name := src.Name
+			key := src.Key
+			if sameEntity {
+				// The source is a separate canonical carrying the same entity, so
+				// it may omit keys the target accumulated. Merge additively and
+				// keep the target's title and key spelling: re-extraction must not
+				// undo a user's rename of the surviving entity.
+				props = mergeProvenanceProps(prevHead.Properties, mergeProps(prevHead.Properties, src.Properties))
+				if prevHead.Name != nil {
+					name = prevHead.Name
+				}
+				if prevHead.Key != nil {
+					key = prevHead.Key
+				}
+			}
 			// Preserve target status unless overwrite strategy — fast_forward may
 			// differ only in status (target has a user-set status we must not stomp).
 			targetStatus := src.Status
@@ -5627,8 +5671,8 @@ func (s *Service) applyMerge(
 			}
 			newVersion := &GraphObject{
 				Type:       prevHead.Type,
-				Name:       src.Name,
-				Key:        src.Key,
+				Name:       name,
+				Key:        key,
 				Status:     targetStatus,
 				Namespace:  src.Namespace,
 				Labels:     labels,
@@ -5657,6 +5701,11 @@ func (s *Service) applyMerge(
 			if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectObject, newVersion.ID, newVersion.CanonicalID); err != nil {
 				return 0, fmt.Errorf("fast-forward object %s: merged outcome: %w", cid, err)
 			}
+			if sameEntity {
+				if err := stampMergedLedger(src.ID); err != nil {
+					return 0, fmt.Errorf("fast-forward object %s: %w", cid, err)
+				}
+			}
 			appliedCount++
 			// Use physical version ID — graph_embedding_jobs.object_id FK references graph_objects.id.
 			embeddingIDs = append(embeddingIDs, newVersion.ID.String())
@@ -5667,11 +5716,11 @@ func (s *Service) applyMerge(
 				continue
 			}
 			src := sourceObjects[cid]
-			tgt := targetObjects[cid]
+			tgt := targetObjects[targetCanonicalID]
 			if src == nil || tgt == nil {
 				continue
 			}
-			prevHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, cid, targetBranchID)
+			prevHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, targetCanonicalID, targetBranchID)
 			if err != nil {
 				return 0, fmt.Errorf("get target head for conflict %s: %w", cid, err)
 			}
@@ -5758,9 +5807,43 @@ func (s *Service) applyMerge(
 			if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectObject, newVersion.ID, newVersion.CanonicalID); err != nil {
 				return 0, fmt.Errorf("conflict-resolve object %s: merged outcome: %w", cid, err)
 			}
+			if sameEntity {
+				if err := stampMergedLedger(src.ID); err != nil {
+					return 0, fmt.Errorf("conflict-resolve object %s: %w", cid, err)
+				}
+			}
 			appliedCount++
 			// Use physical version ID — graph_embedding_jobs.object_id FK references graph_objects.id.
 			embeddingIDs = append(embeddingIDs, newVersion.ID.String())
+
+		case "unchanged":
+			// An exact (type, namespace, key) identity match whose content is already
+			// identical on the target needs no new version, but the source row
+			// still has to be absorbed: carry its contributions onto the target
+			// version, record the destination, and stamp the merge ledger so the
+			// branch row stops counting as a live duplicate. Ordinary unchanged
+			// rows (including target-only heads) have nothing to write.
+			if !sameEntity {
+				continue
+			}
+			src := sourceObjects[cid]
+			tgt := targetObjects[targetCanonicalID]
+			if src == nil || tgt == nil {
+				continue
+			}
+			// Only the source's contributions need copying: the target version
+			// already carries its own, and the union dedupes against them.
+			if err := s.unionMergeContributions(ctx, tx.Tx, projectID, ContributionSubjectObject,
+				[]uuid.UUID{src.ID}, tgt.ID, targetBranchID); err != nil {
+				return 0, fmt.Errorf("absorb same-entity object %s into %s: %w", cid, targetCanonicalID, err)
+			}
+			if err := s.markMergedOutcomes(ctx, tx.Tx, projectID, ContributionSubjectObject, tgt.ID, tgt.CanonicalID); err != nil {
+				return 0, fmt.Errorf("absorb same-entity object %s into %s: merged outcome: %w", cid, targetCanonicalID, err)
+			}
+			if err := stampMergedLedger(src.ID); err != nil {
+				return 0, fmt.Errorf("absorb same-entity object %s: %w", cid, err)
+			}
+			appliedCount++
 
 		case "deleted":
 			// Soft delete on target branch
@@ -6098,7 +6181,10 @@ var mergePolicyPresets = map[string]mergeSettings{
 	"suggest":       {true, defaultMergeSimilarityThreshold, "suggest", "block"},
 	// "partial" merges clean changes (added/fast_forward/deleted) into the
 	// target but leaves ambiguous items — canonical conflicts and
-	// semantically-similar duplicates — on the source branch for review.
+	// semantically-similar duplicates — on the source branch for review. An
+	// exact (type, namespace, key) identity match is not ambiguous: it is the
+	// same entity re-extracted, so it follows the canonical conflict/fast-forward
+	// path even though its canonical_id differs (#1186).
 	"partial": {true, defaultMergeSimilarityThreshold, "suggest", "preserve_target"},
 }
 
@@ -6295,6 +6381,50 @@ func classifyMergeObject(sourceHead, targetHead *BranchObjectHead) (status strin
 	}
 
 	return "unchanged", nil
+}
+
+// applySameEntityMatch reclassifies a summary whose source object would
+// otherwise be "added" but is identified by the natural object key: it shares
+// a (type, namespace, key) identity with an existing target head even though its
+// canonical_id differs. The source is the same entity re-extracted onto a
+// staging branch, so the merge must write it onto the target entity as a new
+// version (unchanged / fast_forward / conflict) rather than minting another
+// canonical or parking it as a "similar" duplicate for review (#1186).
+//
+// It records the matched target canonical_id on the summary so applyMerge knows
+// which target head to update. It is a no-op for anything but an "added"
+// source, and nil-safe so the caller can pass a failed index lookup directly.
+func applySameEntityMatch(summary *BranchMergeObjectSummary, src, same *BranchObjectHead) bool {
+	if summary == nil || summary.Status != "added" || src == nil || same == nil {
+		return false
+	}
+	summary.Status, summary.Conflicts = classifyMergeObject(src, same)
+	targetCanonicalID := same.CanonicalID
+	summary.SameEntityTargetID = &targetCanonicalID
+	summary.TargetHeadID = &same.ID
+	return true
+}
+
+// unionLabels returns the labels from both sides with duplicates removed,
+// preserving first-seen order. A same-entity merge keeps the target's curated
+// labels and adds the source's new ones; an ordinary fast-forward keeps its
+// existing replace semantics.
+func unionLabels(a, b []string) []string {
+	if len(a) == 0 {
+		return b
+	}
+	seen := make(map[string]struct{}, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, list := range [][]string{a, b} {
+		for _, label := range list {
+			if _, ok := seen[label]; ok {
+				continue
+			}
+			seen[label] = struct{}{}
+			out = append(out, label)
+		}
+	}
+	return out
 }
 
 func sortMergeObjectSummaries(summaries []*BranchMergeObjectSummary) {

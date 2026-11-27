@@ -1135,6 +1135,12 @@ type BranchMergeObjectSummary struct {
 	TargetPaths  []string   `json:"target_paths,omitempty"`
 	Conflicts    []string   `json:"conflicts,omitempty"`
 	EnrichedKeys []string   `json:"enriched_keys,omitempty"` // keys added/updated from source
+	// SameEntityTargetID is set when the source object has a different
+	// canonical_id but the same (project, type, namespace, key) identity as an existing
+	// target head. The merge then treats the source as a new version of that
+	// target entity — classified unchanged/fast_forward/conflict instead of
+	// "added" or "similar" — and writes onto this canonical_id.
+	SameEntityTargetID *uuid.UUID `json:"same_entity_target_id,omitempty"`
 	// Similarity fields — populated when Status == "similar"
 	SimilarityScore   float32    `json:"similarity_score,omitempty"`    // 0–1, higher = more similar
 	SimilarTargetID   *uuid.UUID `json:"similar_target_id,omitempty"`   // canonical_id of matched target
