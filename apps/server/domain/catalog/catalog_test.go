@@ -311,15 +311,15 @@ relationshipTypeSchemas:
 func TestLoadManifestAndSplitCount(t *testing.T) {
 	cat, err := Load()
 	require.NoError(t, err)
-	require.Equal(t, "1.1.0", cat.Version)
-	require.Len(t, cat.Types, 65)
+	require.Equal(t, "1.2.0", cat.Version)
+	require.Len(t, cat.Types, 66)
 	require.True(t, hasPair(cat.Relationships, "authored_by", "Movie", "Person"),
 		"ancestry expansion must apply authored_by (CreativeWork) to Movie")
 }
 
 func TestBatch2TypesAndFacets(t *testing.T) {
 	cat := loadCat(t)
-	require.Len(t, cat.Types, 65)
+	require.Len(t, cat.Types, 66)
 	for _, want := range []string{"Vehicle", "InsurancePolicy", "Restaurant", "Meeting", "Flight", "Hospital", "VideoGame", "Order"} {
 		require.True(t, hasType(cat.Types, want), "missing batch-2 type %s", want)
 	}
@@ -333,9 +333,10 @@ func TestBatch2TypesAndFacets(t *testing.T) {
 			require.True(t, names[ty.Parent], "type %s has unresolved parent %s", ty.Name, ty.Parent)
 		}
 	}
-	// tv-movies owns these names; the catalog must not collide.
-	for _, forbidden := range []string{"Show", "Season", "Episode", "Character", "Actor", "Occupation", "Location"} {
-		require.False(t, names[forbidden], "catalog must not define tv-movies type %s", forbidden)
+	// The catalog is the sole common-entity taxonomy now that the tv-movies
+	// blueprint is retired, so it must define the canonical concepts itself.
+	for _, want := range []string{"Person", "Organization", "Place", "TVSeries", "CreativeWork"} {
+		require.True(t, names[want], "catalog must define canonical type %s", want)
 	}
 	got := List(cat, ListFilter{Limit: maxListLimit})
 	cats := map[string]bool{}
@@ -364,4 +365,25 @@ func TestAncestryBatch2(t *testing.T) {
 	require.True(t, hasPair(cat.Relationships, "reviews", "Review", "Vehicle"))
 	require.True(t, hasPair(cat.Relationships, "made_by", "Vehicle", "Organization"))
 	require.True(t, hasPair(cat.Relationships, "performed_by", "MusicEvent", "Person"))
+}
+
+// TestSchemaOrgRelationalCore pins the schema.org relational layer added for the
+// test corpora: social, place, and series edges expand along the catalog
+// ancestry so a subtype (e.g. Movie, Restaurant) inherits the parent's edge.
+func TestSchemaOrgRelationalCore(t *testing.T) {
+	cat := loadCat(t)
+	pairs := [][3]string{
+		{"contained_in_place", "Place", "Place"},
+		{"home_location", "Person", "Place"},
+		{"spouse", "Person", "Person"},
+		{"sibling", "Person", "Person"},
+		{"knows", "Person", "Person"},
+		{"colleague", "Person", "Person"},
+		{"content_location", "Movie", "Place"}, // CreativeWork edge expands to Movie
+		{"founder", "Organization", "Person"},
+		{"part_of_series", "Episode", "TVSeries"},
+	}
+	for _, p := range pairs {
+		require.True(t, hasPair(cat.Relationships, p[0], p[1], p[2]), "missing schema.org relationship %v", p)
+	}
 }

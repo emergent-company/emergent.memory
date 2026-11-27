@@ -50,7 +50,7 @@ func TestUserMintableScopes(t *testing.T) {
 
 	require.Len(t, UserMintableScopes, len(ValidApiTokenScopes)-len(nonMintableScopes),
 		"the mintable catalogue must be derived from the stored one, not hand-listed")
-	for _, scope := range []string{"documents:read", "documents:write", "search", "graph:read", "journal:read"} {
+	for _, scope := range []string{"documents:read", "documents:write", "search", "graph:read", "journal:read", "discovery:read", "discovery:write"} {
 		require.True(t, mintable[scope], "%q must be mintable — it is the fine-grained replacement for the retired umbrellas", scope)
 	}
 }
@@ -95,7 +95,7 @@ func TestRequestScopeTagsExcludeRetiredUmbrellas(t *testing.T) {
 		for _, retired := range []string{"data:read", "data:write", "device:api", "webhook:trigger", "mcp:agent-call", "share:agent-chat"} {
 			require.NotContains(t, tag, retired, "the oneof tag must not offer %q", retired)
 		}
-		for _, mintable := range []string{"documents:read", "documents:write", "search", "journal:read"} {
+		for _, mintable := range []string{"documents:read", "documents:write", "search", "journal:read", "discovery:read", "discovery:write"} {
 			require.Contains(t, tag, mintable, "the oneof tag must offer %q", mintable)
 		}
 	}
@@ -128,10 +128,8 @@ func TestUserMintableScopesCoverRetiredUmbrellaImplications(t *testing.T) {
 // the test also fails when an entry stops being route-required or becomes
 // mintable, so the list cannot rot.
 var routeScopeExemptions = map[string]string{
-	"chat:admin":      "not mintable directly; the mintable agents:write umbrella grants it through ScopeImplies",
-	"org:read":        "internal org-administration scope, deliberately outside the project token vocabulary",
-	"discovery:read":  "separate discovery scope family, outside the retired data:* implication closure tracked by #80",
-	"discovery:write": "separate discovery scope family, outside the retired data:* implication closure tracked by #80",
+	"chat:admin": "not mintable directly; the mintable agents:write umbrella grants it through ScopeImplies",
+	"org:read":   "internal org-administration scope, deliberately outside the project token vocabulary",
 }
 
 // TestRouteRequiredScopesAreMintable scans the production route registrations

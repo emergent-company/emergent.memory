@@ -107,6 +107,7 @@ var apiTokenScopes = []string{
 	"chunks:read", "chunks:write",
 	"search:read", "graph:search:read",
 	"extraction:read", "extraction:write",
+	"discovery:read", "discovery:write",
 	"tasks:read", "tasks:write",
 	"user-activity:read", "user-activity:write",
 	"notifications:read", "notifications:write",

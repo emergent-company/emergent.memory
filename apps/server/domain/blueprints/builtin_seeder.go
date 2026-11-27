@@ -28,16 +28,16 @@ var builtinPacksFS embed.FS
 
 // ListBuiltinObjectTypes returns the platform's common-entity taxonomy as
 // manifest definitions: the built-in catalog's types first (canonical), then
-// any `taxonomy: true` blueprint packs that add domain types (e.g. tv-movies).
-// Discovery aligns a proposed type against this set before inventing a new one.
+// any `taxonomy: true` blueprint packs that add domain types. Discovery aligns
+// a proposed type against this set before inventing a new one.
 //
 // The catalog is reference data (domain/catalog), not a blueprint; packs are
 // read directly from the embedded manifests. A pack cannot shadow a catalog
 // type: a pack type whose name (case-insensitive) matches a catalog type's name
 // or one of its aliases is dropped, so a pack that reuses a canonical concept
-// under a different name (tv-movies "Location" vs catalog "Place" via the
-// "location" alias) still aligns to the catalog type. One malformed pack is
-// skipped with a warning rather than disabling alignment for every other pack.
+// under a different name still aligns to the catalog type. One malformed pack
+// is skipped with a warning rather than disabling alignment for every other
+// pack.
 func ListBuiltinObjectTypes() ([]ObjectTypeDef, error) {
 	cat, err := catalog.Load()
 	if err != nil {

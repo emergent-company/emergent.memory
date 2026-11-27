@@ -67,6 +67,7 @@ func TestClaimAndFinishLifecycle(t *testing.T) {
 	// Finish with a remainder requeues it.
 	require.NoError(t, repo.Finish(ctx, reqID, []uuid.UUID{docA, docB}, []uuid.UUID{docB}))
 	rows, err = repo.ListQueued(ctx)
+	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.ElementsMatch(t, []uuid.UUID{docB}, rows[0].DocumentIDs)
 

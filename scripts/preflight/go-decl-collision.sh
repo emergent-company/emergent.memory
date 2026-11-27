@@ -136,7 +136,15 @@ if [[ -z "$base_ref" ]]; then
   base_ref="origin/${base_branch}"
   # Refresh first: a stale local base ref would miss exactly the collision this
   # guard exists to catch. Tolerate no-network like base-check.sh.
-  if ! git fetch --quiet origin "$base_branch" 2>/dev/null; then
+  #
+  # An explicit refspec, never the bare branch name (#1158): a tag with the
+  # same name as the branch makes `git fetch origin <branch>` resolve the TAG,
+  # print `* tag <branch> -> FETCH_HEAD` and exit 0 (even with --no-tags),
+  # leaving origin/<branch> stale -- so this guard would compare against the
+  # old tip and miss the very collision it exists to catch. The leading `+`
+  # lets a force-pushed base refresh instead of failing the fetch.
+  if ! git fetch --quiet --no-tags origin \
+       "+refs/heads/$base_branch:refs/remotes/origin/$base_branch" 2>/dev/null; then
     if git rev-parse --verify --quiet "$base_ref" >/dev/null 2>&1; then
       printf 'go-decl-collision: WARNING could not reach origin; using cached %s\n' "$base_ref" >&2
     else

@@ -523,6 +523,17 @@ func (ap *AutoProvisioner) attemptProvision(
 			// Don't fail provisioning on clone error — workspace is still usable
 		} else {
 			ap.log.Info("repository cloned successfully", "workspace_id", ws.ID)
+			// Install the repository's committed git hooks into the fresh clone.
+			// Hooks live in .git/hooks of the clone, so a clone has none, and an
+			// agent's commit would reach CI ungated (product #1191). Best effort:
+			// provisioning must not fail because the image lacks the binary or the
+			// repository defines no hooks.
+			if hookErr := ap.checkoutSvc.InstallGitHooks(ctx, provider, containerProviderID, "/workspace"); hookErr != nil {
+				ap.log.Warn("sandbox git hooks were not installed; commits in this workspace run no pre-commit gate",
+					"workspace_id", ws.ID,
+					"error", hookErr,
+				)
+			}
 		}
 	}
 
