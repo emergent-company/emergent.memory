@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/emergent-company/emergent.memory/domain/catalog"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 )
 
@@ -654,7 +655,7 @@ func (h *MCPBlueprintToolHandler) ExecuteBlueprintCatalogResolve(ctx context.Con
 	mode = strings.ToLower(strings.TrimSpace(mode))
 
 	var (
-		matches []CatalogTypeMatch
+		matches []catalog.TypeMatch
 		err     error
 	)
 	switch mode {

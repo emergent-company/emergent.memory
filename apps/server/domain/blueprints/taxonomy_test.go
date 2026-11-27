@@ -1,6 +1,7 @@
 package blueprints
 
 import (
+	"io/fs"
 	"testing"
 	"testing/fstest"
 
@@ -144,4 +145,17 @@ objectTypeSchemas:
 	require.Len(t, types, 1)
 	require.Equal(t, "canonical person", types[0].Description)
 	require.Equal(t, "identity", types[0].Category)
+}
+
+// TestSchemaOrgIsNotABuiltinBlueprintPack pins the catalog separation: the
+// schema.org vocabulary is shipped as reference data under domain/catalog, not
+// as a builtin_packs blueprint. A directory reappearing here would be seeded
+// into the blueprint gallery by BuiltinSeeder.
+func TestSchemaOrgIsNotABuiltinBlueprintPack(t *testing.T) {
+	entries, err := fs.ReadDir(builtinPacksFS, "builtin_packs")
+	require.NoError(t, err)
+	for _, e := range entries {
+		require.NotEqual(t, "schemaorg", e.Name(),
+			"schema.org must live in domain/catalog data, not builtin_packs")
+	}
 }

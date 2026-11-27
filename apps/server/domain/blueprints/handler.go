@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/catalog"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
@@ -495,7 +496,7 @@ func (h *Handler) ResolveCatalog(c echo.Context) error {
 	}
 
 	var (
-		matches []CatalogTypeMatch
+		matches []catalog.TypeMatch
 		err     error
 	)
 	switch strings.ToLower(strings.TrimSpace(c.QueryParam("mode"))) {

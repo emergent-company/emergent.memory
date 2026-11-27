@@ -11,6 +11,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
+	"github.com/emergent-company/emergent.memory/domain/catalog"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/skills"
@@ -75,7 +76,7 @@ type Service struct {
 
 	// catalogEmbedder powers semantic catalog type resolution. Nil means
 	// lexical-only; wired by the fx module when the embeddings service is on.
-	catalogEmbedder TextEmbedder
+	catalogEmbedder catalog.TextEmbedder
 
 	log *slog.Logger
 }
