@@ -4373,9 +4373,7 @@ func (ae *AgentExecutor) runPipeline(
 					// portion of history was dropped (i.e. we're genuinely
 					// near the limit, not just a precautionary trim).
 					if trimmed && numKeep < n/2 {
-						dropped := eventSlice(events, 0, n-numKeep)
-						retainedEvents := sess.Events()
-						retained := eventSlice(retainedEvents, 0, retainedEvents.Len())
+						dropped, retained := partitionForCompaction(events, numKeep)
 						compressed, compErr := ae.compressSession(ctx, dropped, retained, sessionID, contextWindow, modelName)
 						if compErr != nil {
 							ae.log.Warn("session compression failed, proceeding with trimmed session",
@@ -4394,9 +4392,7 @@ func (ae *AgentExecutor) runPipeline(
 				events := sess.Events()
 				n := events.Len()
 				if n > largeSessionThreshold {
-					mid := n / 2
-					dropped := eventSlice(events, 0, mid)
-					retained := eventSlice(events, mid, n)
+					dropped, retained := partitionForCompaction(events, n/2)
 					compressed, compErr := ae.compressSession(ctx, dropped, retained, sessionID, 0, modelName)
 					if compErr != nil {
 						ae.log.Warn("session compression (no context window) failed, proceeding",

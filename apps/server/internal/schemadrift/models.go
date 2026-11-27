@@ -264,6 +264,7 @@ var models = []any{
 	(*agents.AgentRunJob)(nil),
 	(*agents.AgentQueue)(nil),
 	(*agents.Session)(nil),
+	(*agents.SessionCompaction)(nil),
 	(*agents.RunEvent)(nil),
 	(*agents.AgentShareLink)(nil),
 	(*agents.AgentShareSession)(nil),

@@ -2,9 +2,11 @@ package agents
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/adk/v2/model"
@@ -18,8 +20,9 @@ import (
 // compressorTextEvent builds a conversational event for the summariser tests.
 func compressorTextEvent(id, author string, role genai.Role, text string) *session.Event {
 	return &session.Event{
-		ID:     id,
-		Author: author,
+		ID:        id,
+		Timestamp: time.Now(),
+		Author:    author,
 		LLMResponse: model.LLMResponse{
 			Content: genai.NewContentFromText(text, role),
 		},
@@ -30,8 +33,9 @@ func compressorTextEvent(id, author string, role genai.Role, text string) *sessi
 // artefact shape the summary must preserve.
 func compressorToolEvent(id, author, tool string, args map[string]any) *session.Event {
 	return &session.Event{
-		ID:     id,
-		Author: author,
+		ID:        id,
+		Timestamp: time.Now(),
+		Author:    author,
 		LLMResponse: model.LLMResponse{
 			Content: &genai.Content{
 				Role:  string(genai.RoleModel),
@@ -131,13 +135,15 @@ func TestBuildCompressionPromptKeepsToolArtefacts(t *testing.T) {
 	require.Contains(t, prompt, "b-main")
 }
 
-// TestArtefactIndexBounded guards the bound that keeps the summariser input
-// from growing with the number of dropped calls.
-func TestArtefactIndexBounded(t *testing.T) {
+// TestArtefactIndexKeepsNewestWithinBound guards the bound that keeps the
+// summariser input from growing with the number of dropped calls, and the
+// retention order: when the cap bites, the newest calls — the ones adjacent to
+// the retained tail — are the ones kept.
+func TestArtefactIndexKeepsNewestWithinBound(t *testing.T) {
 	var dropped []*session.Event
 	for i := 0; i < compressorMaxArtefactLines*3; i++ {
 		dropped = append(dropped, compressorToolEvent("", "coder", "entity-query",
-			map[string]any{"id": strings.Repeat("x", 400)}))
+			map[string]any{"id": fmt.Sprintf("obj-%03d", i), "payload": strings.Repeat("x", 400)}))
 	}
 
 	lines := artefactIndex(dropped)
@@ -146,6 +152,72 @@ func TestArtefactIndexBounded(t *testing.T) {
 		require.LessOrEqual(t, len([]rune(line)), compressorArtefactLineMaxChars+1,
 			"one artefact line must stay within the char cap (plus the ellipsis)")
 	}
+
+	joined := strings.Join(lines, "\n")
+	require.Contains(t, joined, fmt.Sprintf("obj-%03d", compressorMaxArtefactLines*3-1),
+		"the newest dropped call must be indexed")
+	require.NotContains(t, joined, "obj-000",
+		"the oldest dropped calls are the ones to elide once the cap bites")
+}
+
+// TestPartitionForCompaction covers the split the executor uses, including the
+// degenerate numKeep values: the two halves must always be a partition of the
+// same snapshot, with no event in both and none in neither.
+func TestPartitionForCompaction(t *testing.T) {
+	events := compressorFakeEvents{
+		compressorTextEvent("e1", "user", genai.RoleUser, "a"),
+		compressorTextEvent("e2", "model", genai.RoleModel, "b"),
+		compressorTextEvent("e3", "user", genai.RoleUser, "c"),
+		compressorTextEvent("e4", "model", genai.RoleModel, "d"),
+		compressorTextEvent("e5", "user", genai.RoleUser, "e"),
+	}
+
+	dropped, retained := partitionForCompaction(events, 2)
+	require.Equal(t, []string{"e1", "e2", "e3"}, compressorIDs(dropped))
+	require.Equal(t, []string{"e4", "e5"}, compressorIDs(retained))
+
+	// A numKeep at or above the length drops nothing; the caller then sees a
+	// nil dropped set and compressSession reports "no change".
+	dropped, retained = partitionForCompaction(events, 5)
+	require.Empty(t, dropped)
+	require.Equal(t, []string{"e1", "e2", "e3", "e4", "e5"}, compressorIDs(retained))
+	dropped, retained = partitionForCompaction(events, 99)
+	require.Empty(t, dropped)
+	require.Len(t, retained, 5)
+
+	// Zero or negative keeps nothing.
+	dropped, retained = partitionForCompaction(events, 0)
+	require.Len(t, dropped, 5)
+	require.Empty(t, retained)
+	dropped, retained = partitionForCompaction(events, -3)
+	require.Len(t, dropped, 5)
+	require.Empty(t, retained)
+
+	dropped, retained = partitionForCompaction(nil, 2)
+	require.Nil(t, dropped)
+	require.Nil(t, retained)
+}
+
+// TestBuildCompressionPromptBoundsHugePart asserts one oversized text part can
+// not push the summariser request past its own window.
+func TestBuildCompressionPromptBoundsHugePart(t *testing.T) {
+	dropped := []*session.Event{
+		compressorTextEvent("e1", "user", genai.RoleUser, strings.Repeat("A", compressorConversationPartMaxChars*4)),
+	}
+
+	prompt, ok := buildCompressionPrompt(dropped)
+	require.True(t, ok)
+	require.Contains(t, prompt, "[part truncated]")
+	require.Less(t, len(prompt), compressorConversationPartMaxChars*2)
+}
+
+// compressorIDs returns the event ids of a slice, in order.
+func compressorIDs(events []*session.Event) []string {
+	ids := make([]string, 0, len(events))
+	for _, ev := range events {
+		ids = append(ids, ev.ID)
+	}
+	return ids
 }
 
 // TestBuildCompressionPromptEmptyDropped asserts an all-noise dropped set
@@ -208,6 +280,14 @@ func TestCompressSessionRebuildsRetainedTailVerbatim(t *testing.T) {
 	require.Contains(t, compressorEventText(summaryEvent), compressorSummaryTag)
 	require.Contains(t, compressorEventText(summaryEvent), "SUMMARY-BODY")
 	require.Equal(t, compressorAckText, compressorEventText(gotEvents.At(1)))
+
+	// bunsession reads events ORDER BY timestamp ASC, so the synthetic events
+	// must sort before the retained tail on any service, not only the in-memory
+	// one. Without this the summary would land after the conversation.
+	require.True(t, summaryEvent.Timestamp.Before(retained[0].Timestamp),
+		"the summary must sort before the retained tail")
+	require.True(t, gotEvents.At(1).Timestamp.After(summaryEvent.Timestamp),
+		"the acknowledgement must sort after the summary")
 
 	for i, want := range retained {
 		gotEv := gotEvents.At(2 + i)

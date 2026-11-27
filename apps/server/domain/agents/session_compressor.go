@@ -71,6 +71,20 @@ const (
 	// compressorArtefactLineMaxChars bounds one artefact line. Arguments are
 	// compact JSON, so ids survive and prose is cut.
 	compressorArtefactLineMaxChars = 200
+
+	// compressorConversationPartMaxChars bounds one text part in the
+	// conversation body. A tool result can arrive as text rather than as a
+	// function response and be hundreds of KB; the summariser does not need more
+	// than a few KB of it to say what happened.
+	compressorConversationPartMaxChars = 4000
+
+	// compressorConversationMaxBytes bounds the whole conversation body, so a
+	// pathological session cannot push the summariser request past its own
+	// context window — which would make compaction fail and silently keep the
+	// oversized session. The body is filled oldest-first so goals and original
+	// instructions survive; anything elided is still in the artefact index and
+	// in the durable run transcript.
+	compressorConversationMaxBytes = 48 << 10
 )
 
 // compressSession summarises the dropped events and returns a rebuilt session
@@ -193,10 +207,20 @@ func (ae *AgentExecutor) compressSession(
 	}
 	newSess := createResp.Session
 
+	// Ordering matters: bunsession reads a session's events with
+	// `ORDER BY timestamp ASC`, so the rebuilt session must read
+	// summary → ack → retained. Stamp the synthetic events immediately before
+	// the oldest retained event so they sort first on every session service,
+	// not only on the in-memory one that preserves insertion order.
+	baseTime := time.Now()
+	if len(retained) > 0 && retained[0] != nil && !retained[0].Timestamp.IsZero() {
+		baseTime = retained[0].Timestamp.Add(-time.Millisecond)
+	}
+
 	// Append summary placeholder (user turn).
 	summaryEvent := &session.Event{
 		ID:        fmt.Sprintf("compress-%d-user", time.Now().UnixNano()),
-		Timestamp: time.Now(),
+		Timestamp: baseTime,
 		Author:    "user",
 		LLMResponse: model.LLMResponse{
 			Content: genai.NewContentFromText(
@@ -214,7 +238,7 @@ func (ae *AgentExecutor) compressSession(
 	// Append model acknowledgement.
 	ackEvent := &session.Event{
 		ID:        fmt.Sprintf("compress-%d-model", time.Now().UnixNano()),
-		Timestamp: time.Now(),
+		Timestamp: baseTime.Add(time.Microsecond),
 		Author:    "model",
 		LLMResponse: model.LLMResponse{
 			Content: genai.NewContentFromText(compressorAckText, genai.RoleModel),
@@ -291,8 +315,9 @@ func (ae *AgentExecutor) compressSession(
 func buildCompressionPrompt(dropped []*session.Event) (string, bool) {
 	var conversation strings.Builder
 	lines := 0
+	elided := false
 	for _, ev := range dropped {
-		if ev == nil {
+		if ev == nil || elided {
 			continue
 		}
 		role := conversationRole(ev)
@@ -306,8 +331,17 @@ func buildCompressionPrompt(dropped []*session.Event) (string, bool) {
 			if strings.HasPrefix(strings.TrimSpace(part.Text), compressorSummaryTag) {
 				continue
 			}
-			fmt.Fprintf(&conversation, "[%s]: %s\n", role, part.Text)
+			text := part.Text
+			if r := []rune(text); len(r) > compressorConversationPartMaxChars {
+				text = string(r[:compressorConversationPartMaxChars]) + "… [part truncated]"
+			}
+			fmt.Fprintf(&conversation, "[%s]: %s\n", role, text)
 			lines++
+			if conversation.Len() >= compressorConversationMaxBytes {
+				conversation.WriteString("… [remaining dropped history elided to bound the summariser input; it remains in the run transcript]\n")
+				elided = true
+				break
+			}
 		}
 	}
 
@@ -373,13 +407,12 @@ func priorSummaries(dropped []*session.Event) string {
 
 // artefactIndex renders one bounded line per dropped tool call/result. The
 // arguments are compact JSON so ids and key parameters survive while the line
-// stays short.
+// stays short. When the dropped set holds more calls than the cap, the NEWEST
+// ones are kept: they are the ones adjacent to the retained tail and therefore
+// the ones a continuation is most likely to act on.
 func artefactIndex(dropped []*session.Event) []string {
 	out := make([]string, 0, compressorMaxArtefactLines)
 	for _, ev := range dropped {
-		if len(out) >= compressorMaxArtefactLines {
-			break
-		}
 		if ev == nil {
 			continue
 		}
@@ -396,10 +429,13 @@ func artefactIndex(dropped []*session.Event) []string {
 			default:
 				continue
 			}
-			out = append(out, truncateLine(line, compressorArtefactLineMaxChars))
-			if len(out) >= compressorMaxArtefactLines {
-				break
+			line = truncateLine(line, compressorArtefactLineMaxChars)
+			if len(out) == compressorMaxArtefactLines {
+				copy(out, out[1:])
+				out[compressorMaxArtefactLines-1] = line
+				continue
 			}
+			out = append(out, line)
 		}
 	}
 	return out
@@ -438,6 +474,28 @@ func conversationRole(ev *session.Event) string {
 		return string(ev.Content.Role)
 	}
 	return "unknown"
+}
+
+// partitionForCompaction splits one event snapshot into the events to drop and
+// the tail to retain. numKeep is the number of trailing events the token trim
+// wants to keep; a numKeep of zero, negative, or larger than the list keeps
+// everything and drops nothing, which compressSession treats as "no change".
+//
+// Both halves come from the same snapshot on purpose: deriving the retained
+// half from a second read could put a boundary event (same timestamp, no
+// tiebreaker in the ORDER BY) in neither half or in both.
+func partitionForCompaction(events session.Events, numKeep int) (dropped, retained []*session.Event) {
+	if events == nil {
+		return nil, nil
+	}
+	n := events.Len()
+	if numKeep < 0 {
+		numKeep = 0
+	}
+	if numKeep > n {
+		numKeep = n
+	}
+	return eventSlice(events, 0, n-numKeep), eventSlice(events, n-numKeep, n)
 }
 
 // eventSlice copies events [from, to) into a slice. Callers use it to split the
