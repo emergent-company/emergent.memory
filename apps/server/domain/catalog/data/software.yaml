@@ -1,0 +1,69 @@
+name: schemaorg
+objectTypeSchemas:
+- name: SoftwareApplication
+  label: Software Application
+  description: 'A software program or app — desktop, mobile, web, or service.
+
+    '
+  category: software
+  parent: CreativeWork
+  labels:
+  - software_application
+  - app
+  - program
+  ui:
+    icon: tabler--app-window
+    color: '#14B8A6'
+  properties:
+    name:
+      type: string
+      description: Application name.
+    application_category:
+      type: string
+      title: Application category
+      description: Category, e.g. productivity, game, developer tool.
+    operating_system:
+      type: string
+      title: Operating system
+      description: Supported operating systems.
+    software_version:
+      type: string
+      title: Version
+      description: Version string.
+    url:
+      type: url
+      description: Download or homepage URL.
+  required:
+  - name
+- name: SoftwareSourceCode
+  label: Source Code
+  description: 'A source-code artifact — repository, package, or code snippet.
+
+    '
+  category: software
+  parent: CreativeWork
+  labels:
+  - source_code
+  - code
+  - repository
+  ui:
+    icon: tabler--code
+    color: '#0D9488'
+  properties:
+    name:
+      type: string
+      description: Project or artifact name.
+    programming_language:
+      type: string
+      title: Programming language
+      description: Primary language.
+    code_repository:
+      type: url
+      title: Repository
+      description: Repository URL.
+    code_sample:
+      type: string
+      title: Code sample
+      description: A representative code snippet.
+  required:
+  - name

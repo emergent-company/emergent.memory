@@ -1,0 +1,53 @@
+name: schemaorg
+objectTypeSchemas:
+- name: MedicalEntity
+  label: Medical Entity
+  description: 'A medical concept or entity — condition, procedure, or healthcare topic.
+
+    '
+  category: health
+  parent: Thing
+  labels:
+  - medical_entity
+  - medical
+  - health
+  ui:
+    icon: tabler--stethoscope
+    color: '#E11D48'
+  properties:
+    name:
+      type: string
+      description: Name of the medical entity.
+    description:
+      type: string
+      description: Description.
+  required:
+  - name
+- name: Drug
+  label: Drug
+  description: 'A pharmaceutical drug or medication.
+
+    '
+  category: health
+  parent: MedicalEntity
+  labels:
+  - drug
+  - medication
+  - medicine
+  ui:
+    icon: tabler--pill
+    color: '#BE123C'
+  properties:
+    name:
+      type: string
+      description: Drug name.
+    active_ingredient:
+      type: string
+      title: Active ingredient
+      description: Active ingredient.
+    dosage_form:
+      type: string
+      title: Dosage form
+      description: Form, e.g. tablet, capsule, liquid.
+  required:
+  - name

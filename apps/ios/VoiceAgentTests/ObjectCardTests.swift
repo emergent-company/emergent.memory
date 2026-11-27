@@ -172,6 +172,11 @@ struct ObjectTypeAppearanceTests {
         "message-star", "star-half", "chef-hat", "building-store", "app-window",
         "code", "briefcase", "id-badge", "school", "list-check", "category",
         "stethoscope", "pill", "map",
+        "building-bank", "building-hospital", "plane", "user-heart", "map-2",
+        "camera", "bed", "car", "music", "users", "album", "microphone",
+        "palette", "database", "device-mobile", "device-gamepad",
+        "shopping-cart", "receipt", "tools", "tools-kitchen-2",
+        "first-aid-kit", "shield",
     ]
 
     @Test func everyTablerIconHasASymbol() {

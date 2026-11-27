@@ -1,0 +1,29 @@
+name: schemaorg
+objectTypeSchemas:
+- name: Course
+  label: Course
+  description: 'A course or class of study offered by an organization.
+
+    '
+  category: education
+  parent: CreativeWork
+  labels:
+  - course
+  - class
+  - training
+  ui:
+    icon: tabler--school
+    color: '#9333EA'
+  properties:
+    name:
+      type: string
+      description: Course name.
+    description:
+      type: string
+      description: Course description.
+    provider_name:
+      type: string
+      title: Provider
+      description: Name of the offering organization.
+  required:
+  - name

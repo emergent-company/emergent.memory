@@ -1,0 +1,129 @@
+name: schemaorg
+relationshipTypeSchemas:
+- name: authored_by
+  label: Authored by
+  description: The work was authored or created by a person or organization.
+  sourceTypes:
+  - CreativeWork
+  - Article
+  - Book
+  - Recipe
+  - Course
+  - HowTo
+  targetTypes:
+  - Person
+  - Organization
+- name: directed_by
+  label: Directed by
+  description: The production was directed by a person.
+  sourceTypes:
+  - Movie
+  - TVSeries
+  targetTypes:
+  - Person
+- name: featured_actor
+  label: Featured actor
+  description: A person performs in the production.
+  sourceTypes:
+  - Movie
+  - TVSeries
+  targetTypes:
+  - Person
+- name: produced_by
+  label: Produced by
+  description: The production was produced by an organization.
+  sourceTypes:
+  - Movie
+  - TVSeries
+  targetTypes:
+  - Organization
+- name: part_of_site
+  label: Part of site
+  description: The page belongs to a website.
+  sourceTypes:
+  - WebPage
+  targetTypes:
+  - WebSite
+- name: works_for
+  label: Works for
+  description: The person is employed by or works for the organization.
+  sourceTypes:
+  - Person
+  targetTypes:
+  - Organization
+- name: member_of
+  label: Member of
+  description: The person is a member of the organization.
+  sourceTypes:
+  - Person
+  targetTypes:
+  - Organization
+- name: located_at
+  label: Located at
+  description: The event or business is located at a place.
+  sourceTypes:
+  - Event
+  - LocalBusiness
+  targetTypes:
+  - Place
+- name: organized_by
+  label: Organized by
+  description: The event is organized by a person or organization.
+  sourceTypes:
+  - Event
+  targetTypes:
+  - Person
+  - Organization
+- name: parent_organization
+  label: Parent organization
+  description: The organization is a subsidiary or child of another.
+  sourceTypes:
+  - Organization
+  targetTypes:
+  - Organization
+- name: has_offer
+  label: Has offer
+  description: The product is offered under this price/availability offer.
+  sourceTypes:
+  - Product
+  targetTypes:
+  - Offer
+- name: made_by
+  label: Made by
+  description: The product is manufactured by an organization.
+  sourceTypes:
+  - Product
+  targetTypes:
+  - Organization
+- name: has_brand
+  label: Has brand
+  description: The product is sold under this brand.
+  sourceTypes:
+  - Product
+  targetTypes:
+  - Brand
+- name: reviews
+  label: Reviews
+  description: The review evaluates a product or creative work.
+  sourceTypes:
+  - Review
+  targetTypes:
+  - Product
+  - CreativeWork
+  - Recipe
+  - SoftwareApplication
+- name: employed_at
+  label: Employed at
+  description: The job posting is for a role at the organization.
+  sourceTypes:
+  - JobPosting
+  targetTypes:
+  - Organization
+- name: offered_by
+  label: Offered by
+  description: The course or software is offered by an organization.
+  sourceTypes:
+  - Course
+  - SoftwareApplication
+  targetTypes:
+  - Organization

@@ -1,0 +1,140 @@
+name: schemaorg
+objectTypeSchemas:
+- name: Movie
+  label: Movie
+  description: 'A feature-length motion picture — a film or movie title.
+
+    '
+  category: media
+  parent: CreativeWork
+  labels:
+  - movie
+  - film
+  - motion_picture
+  ui:
+    icon: tabler--movie
+    color: '#DB2777'
+  properties:
+    name:
+      type: string
+      title: Title
+      description: Movie title.
+    duration:
+      type: integer
+      title: Duration (min)
+      description: Runtime in whole minutes.
+      minimum: 0
+    content_rating:
+      type: string
+      title: Content rating
+      description: Age rating, e.g. 'PG-13'.
+    date_published:
+      type: date
+      title: Released
+      description: Release date (YYYY-MM-DD).
+    genre:
+      type: array
+      title: Genres
+      description: Genres (drama, comedy, ...).
+      items:
+        type: string
+  required:
+  - name
+- name: TVSeries
+  label: TV Series
+  description: 'A television series or show: an ordered set of seasons and episodes.
+
+    '
+  category: media
+  parent: CreativeWork
+  labels:
+  - tv_series
+  - television_series
+  - tv_show
+  ui:
+    icon: tabler--device-tv
+    color: '#EC4899'
+  properties:
+    name:
+      type: string
+      title: Title
+      description: Series title.
+    number_of_seasons:
+      type: integer
+      title: Seasons
+      description: Number of seasons.
+      minimum: 0
+    number_of_episodes:
+      type: integer
+      title: Episodes
+      description: Number of episodes.
+      minimum: 0
+  required:
+  - name
+- name: VideoObject
+  label: Video
+  description: 'A video recording or clip — a standalone video, not necessarily a film or series.
+
+    '
+  category: media
+  parent: CreativeWork
+  labels:
+  - video
+  - clip
+  - footage
+  ui:
+    icon: tabler--video
+    color: '#F43F5E'
+  properties:
+    name:
+      type: string
+      title: Title
+      description: Video title.
+    duration:
+      type: integer
+      title: Duration (min)
+      description: Runtime in whole minutes.
+      minimum: 0
+    content_url:
+      type: url
+      title: Content URL
+      description: URL of the video file or page.
+    thumbnail_url:
+      type: url
+      title: Thumbnail URL
+      description: URL of a thumbnail image.
+  required:
+  - name
+- name: ImageObject
+  label: Image
+  description: 'A single image or photograph.
+
+    '
+  category: media
+  parent: CreativeWork
+  labels:
+  - image
+  - picture
+  - photo
+  ui:
+    icon: tabler--photo
+    color: '#F97316'
+  properties:
+    name:
+      type: string
+      title: Title
+      description: Image title or caption.
+    content_url:
+      type: url
+      title: Content URL
+      description: URL of the image file.
+    width:
+      type: integer
+      description: Pixel width.
+      minimum: 0
+    height:
+      type: integer
+      description: Pixel height.
+      minimum: 0
+  required:
+  - name
