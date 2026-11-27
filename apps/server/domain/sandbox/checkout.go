@@ -251,19 +251,67 @@ git config --global credential.helper store
 	return nil
 }
 
-// gitHooksInstallCommand installs the repository's lefthook config into the
-// clone's .git/hooks. It reports a missing binary explicitly (exit 127) instead
-// of letting `lefthook: not found` scroll past as a generic failure, because the
-// two cases need different fixes: a missing binary is an image problem, a
-// non-zero from `lefthook install` is a repository problem.
-const gitHooksInstallCommand = `command -v lefthook >/dev/null 2>&1 || {
+// sandboxHooksTag is the lefthook tag whose jobs a workspace runs on commit.
+//
+// The full pre-commit set cannot run in a sandbox: the image ships go, gofmt,
+// git, grep and gitleaks, but no templ, golangci-lint, ruff or swiftlint, and a
+// whole-tree `go vet ./...`/`go build ./...` is minutes on a cold clone inside a
+// git operation's 60 s budget. Running everything would fail on a missing binary
+// and block every commit, which is worse than the ungated commit this installs
+// to fix (product #1191). So lefthook.yml tags the cheap, toolchain-light checks
+// (`sandbox`) and this hook runs only those; everything else stays a developer
+// machine and CI concern.
+const sandboxHooksTag = "sandbox"
+
+const (
+	// hooksInstallTimeoutMs bounds `lefthook install` plus writing the shim.
+	hooksInstallTimeoutMs = 60000
+
+	// gitHooksShimMarker starts the generated shim, so a re-run can tell its own
+	// file from a hook a developer or a previous install wrote.
+	gitHooksShimMarker = "# installed-by: memory-sandbox-provisioner"
+)
+
+// sandboxPreCommitHook replaces the hook `lefthook install` writes. That hook
+// runs the whole pre-commit set; this one runs only the jobs tagged
+// sandboxHooksTag, and sets GITLEAKS_OPTIONAL as a safety valve so an image
+// without gitleaks skips the scan instead of failing every commit (the scan
+// still runs whenever the binary is present, which the image guarantees).
+const sandboxPreCommitHook = "#!/bin/sh\n" +
+	gitHooksShimMarker + "\n" +
+	"# Runs the repository's lefthook pre-commit jobs tagged `sandbox`: the checks\n" +
+	"# the workspace image can actually run. Full-tree build/vet, templ, golangci-lint,\n" +
+	"# ruff and swiftlint are developer-machine and CI checks (product #1191).\n" +
+	"export GITLEAKS_OPTIONAL=1\n" +
+	"exec lefthook run pre-commit --tag " + sandboxHooksTag + " --no-auto-install\n"
+
+// gitHooksInstallCommand installs the repository's hooks into the clone and
+// narrows the pre-commit hook to the sandbox tag.
+//
+// It reports a missing binary explicitly (exit 127) instead of letting
+// `lefthook: not found` scroll past as a generic failure, because the two cases
+// need different fixes: a missing binary is an image problem, a non-zero from an
+// installed binary is a repository problem. A repository with no lefthook config
+// is a no-op, not a failure — and it must not fall through to `lefthook install`,
+// which *creates* a lefthook.yml when none exists, leaving a file the agent's
+// `git add -A` would commit into the customer's repository.
+const gitHooksInstallCommand = `set -e
+if [ ! -f lefthook.yml ]; then
+  echo "no lefthook.yml at the repository root; nothing to install"
+  exit 0
+fi
+command -v lefthook >/dev/null 2>&1 || {
   echo "lefthook is not installed in the workspace image; commits in this sandbox run no pre-commit hooks" >&2
   exit 127
 }
-lefthook install 2>&1`
+lefthook install
+cat > .git/hooks/pre-commit <<'MEMORY_SANDBOX_HOOK'
+` + sandboxPreCommitHook + `MEMORY_SANDBOX_HOOK
+chmod 0755 .git/hooks/pre-commit`
 
 // InstallGitHooks installs the repository's committed git hooks (lefthook.yml)
-// into a freshly cloned workspace.
+// into a freshly cloned workspace, so `git commit` runs the sandbox subset of
+// the pre-commit gate.
 //
 // Git hooks live in .git/hooks of each clone, so a clone is born without them:
 // `git clone` never installs hooks and nothing in the repository sets
@@ -281,15 +329,19 @@ func (cs *CheckoutService) InstallGitHooks(ctx context.Context, provider Provide
 	result, err := provider.Exec(ctx, providerID, &ExecRequest{
 		Command:   gitHooksInstallCommand,
 		Workdir:   destPath,
-		TimeoutMs: 60000,
+		TimeoutMs: hooksInstallTimeoutMs,
 	})
 	if err != nil {
 		return fmt.Errorf("install git hooks: %w", err)
 	}
 	if result.ExitCode != 0 {
-		return fmt.Errorf("install git hooks: exit %d: %s", result.ExitCode, sanitizeGitOutput(result.Stderr))
+		// Both streams: `lefthook install` writes its progress and its errors to
+		// stderr, but a shell-level failure (the heredoc, chmod) reports on
+		// stdout, and an empty message is indistinguishable from a silent failure.
+		return fmt.Errorf("install git hooks: exit %d: %s", result.ExitCode,
+			sanitizeGitOutput(strings.TrimSpace(result.Stdout+"\n"+result.Stderr)))
 	}
-	cs.log.Info("sandbox git hooks installed", "path", destPath)
+	cs.log.Info("sandbox git hooks installed", "path", destPath, "tag", sandboxHooksTag)
 	return nil
 }
 
