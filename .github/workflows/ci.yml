@@ -458,6 +458,15 @@ jobs:
       - name: Release version map tests
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: .github/scripts/release-versions.test.sh
+      # The publish verdict is the published tag, not a step's exit code
+      # (#1209): a transient failed retry must not mask a complete image. The
+      # suite stubs `docker buildx imagetools inspect`, so it pins every case
+      # hermetically — complete tag set, missing tag, mixed digests, the
+      # `sha-` witness, probe mode and the greppable `publish red but tag
+      # verified: <digest>` line.
+      - name: Publish verification tests
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: .github/scripts/verify-published-image.test.sh
       # The leak gate's own test (#2343): the scan lived in a workflow run:
       # body, so a pattern change could only be checked by retyping the regex,
       # and three regressions shipped that way (#2145, #2290/#2342, #2336). The

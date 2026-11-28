@@ -162,7 +162,8 @@ jobs:
       # Cache poisoning is transient (an evicted Azure blob makes the gha
       # cache manifest resolve to a 404 BlobNotFound, which buildx treats as
       # fatal). Bypassing cache on retry guarantees the release tag is
-      # published instead of silently missing.
+      # published instead of silently missing — but only when a tag is
+      # actually missing: see `Verify publish after the first attempt` (#1209).
       - name: Build and push
         id: build
         if: steps.changed.outputs.changed != 'false' || steps.source.outputs.exists == 'false'
@@ -185,8 +186,32 @@ jobs:
           cache-from: type=gha,scope=memory-server
           cache-to: type=gha,scope=memory-server,mode=max
 
-      - name: Build and push (retry, cache bypassed)
+      # #1209: a buildx failure is not the same fact as "nothing was published".
+      # The status stream can drop *after* the manifest list has been exported
+      # and the tags named, and leave a complete, pullable image behind (that is
+      # how v0.105.0's web-ui publisher failed — the same fan-out, the same
+      # retry). Probe the tags before spending a rebuild: a cache-bypassed retry
+      # rebuilds with different digests (the server also bakes BUILD_TIME into
+      # the binary) and re-stamps tags that were already correct, so it can only
+      # make the release less well defined. Advisory (probe mode) — the verdict
+      # is the `Verify published image` step below.
+      - name: Verify publish after the first attempt
+        id: verify-first
         if: steps.build.outcome == 'failure'
+        continue-on-error: true
+        env:
+          VERIFY_TAGS: ${{ steps.meta.outputs.tags }}
+          VERIFY_COMMIT: ${{ steps.version.outputs.commit }}
+          VERIFY_OUTCOME: ${{ steps.build.outcome }}
+          VERIFY_REQUIRE: 'false'
+        run: .github/scripts/verify-published-image.sh
+
+      - name: Build and push (retry, cache bypassed)
+        id: retry
+        # Only when the probe found the published tag set incomplete. Its exit
+        # code is advisory: the verdict is the tag, not the retry (#1209).
+        if: steps.build.outcome == 'failure' && steps.verify-first.outputs.verified != 'true'
+        continue-on-error: true
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -202,6 +227,25 @@ jobs:
           # Keep cache-to so a fresh cache is written for subsequent runs.
           cache-to: type=gha,scope=memory-server,mode=max
           no-cache: true
+
+      # The release verdict (#1209): ask the registry whether the tag set this
+      # job intended to publish resolves to one image, instead of deciding on a
+      # build step's exit code. A transient registry-auth failure on the retry,
+      # or a transport drop after the first attempt already landed the manifest
+      # list, is an unnecessary operation's failure — it must not mask a
+      # published image. When an attempt was red but the artifact is complete
+      # the script logs `publish red but tag verified: <digest>`, so an operator
+      # never has to pull the image by hand to find out. It still fails when the
+      # pinned tag is missing or the tags name different images: those are red
+      # releases, not red logs.
+      - name: Verify published image
+        if: steps.build.outcome == 'failure'
+        env:
+          VERIFY_TAGS: ${{ steps.meta.outputs.tags }}
+          VERIFY_COMMIT: ${{ steps.version.outputs.commit }}
+          VERIFY_OUTCOME: ${{ steps.build.outcome }}
+          VERIFY_RETRY_OUTCOME: ${{ steps.retry.outcome }}
+        run: .github/scripts/verify-published-image.sh
 
       # Unchanged tag push: re-tag the previous version's multi-arch manifest list
       # to the new version tags (no rebuild).
