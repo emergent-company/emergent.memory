@@ -978,8 +978,9 @@ type TraverseEdge struct {
 //	"mine"          – similarity on, source always wins on conflicts
 //	"mine_no_sim"   – source wins, no similarity probe
 //	"partial"       – apply clean changes; leave canonical conflicts and similar pairs for review
-//	"partial_newest" – partial, plus auto-take the newer value for same-entity re-extraction
-//	                  property drift (identity/name drift still goes to review)
+//	"newest"        – resolve canonical conflicts deterministically in favour of the newer side
+//	                  (no similarity probe); ties are left for review
+//	"partial_newest" – partial, plus the deterministic newest-wins canonical-conflict resolution
 //	"suggest"       – similarity on, flag similar pairs for human review; block on conflicts
 type BranchMergeRequest struct {
 	SourceBranchID uuid.UUID `json:"source_branch_id" validate:"required"`
@@ -1000,7 +1001,7 @@ type BranchMergeRequest struct {
 	WaitForEmbeddings bool `json:"wait_for_embeddings,omitempty"`
 
 	// ConflictStrategy is the legacy field, used when Policy is empty.
-	// "enrich" (default), "overwrite", "preserve_target", "block"
+	// "enrich" (default), "overwrite", "preserve_target", "block", "newest"
 	ConflictStrategy string `json:"conflict_strategy,omitempty"`
 }
 
@@ -1131,7 +1132,7 @@ type BranchMergeObjectSummary struct {
 	// "similar" means no canonical_id match was found but a semantically similar object
 	// exists in the target above the similarity threshold. The policy determines the action.
 	Status       string     `json:"status"`
-	Resolution   string     `json:"resolution,omitempty"` // "enriched", "overwritten", "newest", "skipped", "absorbed"
+	Resolution   string     `json:"resolution,omitempty"` // "enriched", "overwritten", "newest_source", "newest_target", "skipped", "absorbed"
 	SourceHeadID *uuid.UUID `json:"source_head_id,omitempty"`
 	TargetHeadID *uuid.UUID `json:"target_head_id,omitempty"`
 	SourcePaths  []string   `json:"source_paths,omitempty"`

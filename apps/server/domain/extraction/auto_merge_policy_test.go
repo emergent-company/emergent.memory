@@ -7,6 +7,7 @@ func TestResolveAutoMergePolicy(t *testing.T) {
 		"partial":        "partial",
 		"enrich":         "enrich",
 		"partial_newest": "partial_newest",
+		"newest":         "newest",
 		"":               "partial",
 		"overwrite":      "partial",
 	}

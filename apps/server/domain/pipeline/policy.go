@@ -77,8 +77,9 @@ type ExtractPolicy struct {
 // MergePolicy governs auto-merging extraction staging branches.
 type MergePolicy struct {
 	// Policy selects the branch-merge preset: partial (safe default), enrich,
-	// or partial_newest (partial plus opt-in same-entity drift resolution).
-	Policy               string  `json:"policy"` // partial | enrich | partial_newest
+	// partial_newest (partial plus deterministic newest-wins conflict
+	// resolution), or newest (newest-wins without the similarity probe).
+	Policy               string  `json:"policy"` // partial | enrich | partial_newest | newest
 	SimilarityThreshold  float32 `json:"similarity_threshold"`
 	BranchRetentionDays  int     `json:"branch_retention_days"`
 	SweepIntervalMinutes int     `json:"sweep_interval_minutes"`
@@ -212,9 +213,9 @@ func Validate(p Policy) error {
 		return fmt.Errorf("extract.backfill_limit_per_run must be within [0,1000]")
 	}
 	switch p.Merge.Policy {
-	case "partial", "enrich", "partial_newest":
+	case "partial", "enrich", "partial_newest", "newest":
 	default:
-		return fmt.Errorf("merge.policy must be partial, enrich or partial_newest")
+		return fmt.Errorf("merge.policy must be partial, enrich, partial_newest or newest")
 	}
 	if p.Merge.SimilarityThreshold < 0 || p.Merge.SimilarityThreshold > 1 {
 		return fmt.Errorf("merge.similarity_threshold must be within [0,1]")

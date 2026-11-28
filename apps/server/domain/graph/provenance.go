@@ -263,6 +263,21 @@ func provenanceInt(v any) int {
 	return 0
 }
 
+// newestExtractedAt returns the most recent `_sources[].extracted_at` on a
+// properties map and whether one was found. It is the deterministic recency
+// signal the newest-wins merge resolution keys on; a head with no `_sources`
+// timestamps yields ok=false so the caller can fall back to the producing job's
+// created_at (or default the side).
+func newestExtractedAt(props map[string]any) (time.Time, bool) {
+	var newest time.Time
+	for _, e := range sourcesFromProps(props) {
+		if e.ExtractedAt.After(newest) {
+			newest = e.ExtractedAt
+		}
+	}
+	return newest, !newest.IsZero()
+}
+
 // normalizeObjectKey normalizes an object key for deterministic same-entity
 // detection at merge: trimmed and case-insensitive. An empty or nil key returns
 // "" so objects without a key never match.

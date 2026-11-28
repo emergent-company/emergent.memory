@@ -5292,39 +5292,56 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 	skippedCount := 0
 	leftForReview := 0
 	leftForReviewObjs := make([]map[string]any, 0)
-	for _, s := range responseObjectSummaries {
-		switch s.Status {
+	for _, sum := range responseObjectSummaries {
+		switch sum.Status {
 		case "conflict":
 			switch strategy {
 			case "enrich":
-				s.Resolution = "enriched"
+				sum.Resolution = "enriched"
 				resolvedCount++
 			case "overwrite":
-				s.Resolution = "overwritten"
+				sum.Resolution = "overwritten"
 				resolvedCount++
 			case "newest":
-				// Mirror applyMerge exactly: only a same-entity re-extraction
-				// whose drift does not touch an identity property auto-resolves.
-				if s.SameEntityTargetID != nil && !hasSameEntityIdentityConflict(s.Conflicts) {
-					s.Resolution = "newest"
-					resolvedCount++
+				// Mirror applyMerge exactly: recency decides the winner, and a
+				// tie (or an undeterminable recency) is left for review.
+				src := sourceObjects[sum.CanonicalID]
+				var tgt *BranchObjectHead
+				if sum.SameEntityTargetID != nil {
+					tgt = targetObjects[*sum.SameEntityTargetID]
 				} else {
-					s.Resolution = "skipped"
+					tgt = targetObjects[sum.CanonicalID]
+				}
+				if src != nil && tgt != nil {
+					switch s.compareRecency(ctx, src.Properties, tgt.Properties, src.ExtractionJobID, tgt.ExtractionJobID) {
+					case -1:
+						sum.Resolution = "newest_source"
+						resolvedCount++
+					case 1:
+						sum.Resolution = "newest_target"
+						resolvedCount++
+					default:
+						sum.Resolution = "skipped"
+						skippedCount++
+						leftForReview++
+					}
+				} else {
+					sum.Resolution = "skipped"
 					skippedCount++
 					leftForReview++
 				}
 			case "preserve_target":
-				s.Resolution = "skipped"
+				sum.Resolution = "skipped"
 				skippedCount++
 				leftForReview++
 			}
 		case "similar":
 			switch settings.SimilarityAction {
 			case "enrich", "theirs":
-				s.Resolution = "absorbed-enrich"
+				sum.Resolution = "absorbed-enrich"
 				resolvedCount++
 			case "mine":
-				s.Resolution = "absorbed-mine"
+				sum.Resolution = "absorbed-mine"
 				resolvedCount++
 			case "suggest", "":
 				// Empty action (presets "manual", "enrich_no_sim",
@@ -5333,7 +5350,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 				// treats "" identically, so the dry-run/left-for-review
 				// precompute must too, or an exact-key reclassified object
 				// is silently skipped while leftForReview stays 0.
-				s.Resolution = "suggested"
+				sum.Resolution = "suggested"
 				leftForReview++
 			}
 		}
@@ -5341,26 +5358,26 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		// Collect a compact breakdown of objects left for human review, written
 		// into the merge journal event so reviewers can see what merged vs what
 		// did not without re-running a dry-run diff.
-		if s.Resolution == "skipped" || s.Resolution == "suggested" {
+		if sum.Resolution == "skipped" || sum.Resolution == "suggested" {
 			entry := map[string]any{
-				"canonical_id": s.CanonicalID.String(),
-				"status":       s.Status,
-				"resolution":   s.Resolution,
+				"canonical_id": sum.CanonicalID.String(),
+				"status":       sum.Status,
+				"resolution":   sum.Resolution,
 			}
-			if src := sourceObjects[s.CanonicalID]; src != nil {
+			if src := sourceObjects[sum.CanonicalID]; src != nil {
 				entry["type"] = src.Type
 				if src.Name != nil {
 					entry["name"] = *src.Name
 				}
 			}
-			if len(s.Conflicts) > 0 {
-				entry["conflicts"] = s.Conflicts
+			if len(sum.Conflicts) > 0 {
+				entry["conflicts"] = sum.Conflicts
 			}
-			if s.SimilarTargetID != nil {
-				entry["similarity_score"] = s.SimilarityScore
-				entry["similar_target_id"] = s.SimilarTargetID.String()
-				if s.SimilarTargetName != "" {
-					entry["similar_target_name"] = s.SimilarTargetName
+			if sum.SimilarTargetID != nil {
+				entry["similarity_score"] = sum.SimilarityScore
+				entry["similar_target_id"] = sum.SimilarTargetID.String()
+				if sum.SimilarTargetName != "" {
+					entry["similar_target_name"] = sum.SimilarTargetName
 				}
 			}
 			leftForReviewObjs = append(leftForReviewObjs, entry)
@@ -5650,6 +5667,10 @@ func (s *Service) applyMerge(
 			// provenance with the target head's so a fast-forward never drops
 			// prior sources from other documents.
 			props := mergeProvenanceProps(prevHead.Properties, src.Properties)
+			// Description is non-conflicting and newest-wins (L3): a description-
+			// only re-extraction fast-forwards here, so carry the newer side's
+			// description rather than whichever side happened to overlay.
+			s.applyNewestDescription(ctx, props, src.Properties, prevHead.Properties, src.ExtractionJobID, prevHead.ExtractionJobID)
 			// Preserve target status unless overwrite strategy — fast_forward may
 			// differ only in status (target has a user-set status we must not stomp).
 			targetStatus := src.Status
@@ -5729,32 +5750,35 @@ func (s *Service) applyMerge(
 			var mergedProps map[string]any
 			var mergeResolution string
 			var enrichedKeys []string
+			var sourceWins bool
 			switch strategy {
 			case "overwrite":
 				// Source wins all conflicting keys.
 				mergedProps = mergeProps(prevHead.Properties, src.Properties)
 				mergeResolution = "overwritten"
+				sourceWins = true
 			case "newest":
-				// Opt-in auto-resolution of same-entity re-extraction drift
-				// (#1222). It is deliberately narrow: only an exact-key
-				// same-entity match whose drift leaves the entity's identity
-				// alone auto-takes the newer (source) value. A canonical-id
-				// conflict (a genuine divergence between branches) and any
-				// identity-property drift stay on the target for review,
-				// exactly as the partial policy would leave them.
-				if summary.SameEntityTargetID == nil || hasSameEntityIdentityConflict(summary.Conflicts) {
+				// Deterministic newest-wins resolution: whichever side's
+				// extraction is more recent takes the conflicting keys. Recency
+				// is the max `_sources[].extracted_at`, falling back to the
+				// producing job's created_at; a tie (or an undeterminable
+				// recency) is left on the target for review, exactly like
+				// preserve_target. L0/L3 have already stripped provenance and
+				// description from the conflict set, so what reaches here is a
+				// genuine value disagreement.
+				switch s.compareRecency(ctx, src.Properties, prevHead.Properties, src.ExtractionJobID, prevHead.ExtractionJobID) {
+				case -1: // source newer — source wins, like overwrite
+					mergedProps = mergeProps(prevHead.Properties, src.Properties)
+					mergeResolution = "newest_source"
+					sourceWins = true
+					enrichedKeys = append(enrichedKeys, summary.Conflicts...)
+					summary.EnrichedKeys = enrichedKeys
+				case 1: // target newer — target wins, like enrich
+					mergedProps = mergeProps(src.Properties, prevHead.Properties)
+					mergeResolution = "newest_target"
+				default: // tie / undeterminable — leave for review
 					continue
 				}
-				// Target is the base; the newer extraction overlays it, so a
-				// conflicting property takes the source value while keys the
-				// source no longer emits are kept (additive, never a drop).
-				mergedProps = mergeProps(prevHead.Properties, src.Properties)
-				mergeResolution = "newest"
-				// summary.Conflicts is every overlapping path with a different
-				// value; no identity path is in it here, so all of them were
-				// overwritten from the source.
-				enrichedKeys = append(enrichedKeys, summary.Conflicts...)
-				summary.EnrichedKeys = enrichedKeys
 			default: // "enrich"
 				// Target wins same keys; source adds new keys only.
 				mergedProps = mergeProps(src.Properties, prevHead.Properties)
@@ -5770,22 +5794,17 @@ func (s *Service) applyMerge(
 			// provenance onto the merged result so conflict resolution never
 			// drops sources from either side.
 			mergedProps = applyProvenanceUnion(mergedProps, prevHead.Properties, src.Properties)
-			// Status: preserve target unless overwrite.
+			// Description is non-conflicting and newest-wins (L3): the newer
+			// side's description survives regardless of the conflict strategy.
+			s.applyNewestDescription(ctx, mergedProps, src.Properties, prevHead.Properties, src.ExtractionJobID, prevHead.ExtractionJobID)
+			// Status/name/labels come from the winning side.
 			resolvedStatus := prevHead.Status
 			resolvedName := prevHead.Name
-			if strategy == "overwrite" {
+			labels := prevHead.Labels
+			if sourceWins {
 				resolvedStatus = src.Status
 				resolvedName = src.Name
-			}
-			labels := prevHead.Labels
-			if strategy == "overwrite" {
 				labels = src.Labels
-			}
-			if strategy == "newest" {
-				// Same-entity drift resolution keeps the target's curated
-				// labels and adds the newer extraction's, like the same-entity
-				// fast-forward path does.
-				labels = unionLabels(prevHead.Labels, src.Labels)
 			}
 			if labels == nil {
 				labels = []string{}
@@ -5903,6 +5922,9 @@ func (s *Service) applyMerge(
 			// sources, and force a version write when only provenance changed.
 			provChanged := provenanceKeysChanged(existingTarget.Properties, existingTarget.Properties, src.Properties)
 			mergedProps = applyProvenanceUnion(mergedProps, existingTarget.Properties, src.Properties)
+			// Description is non-conflicting and newest-wins (L3), even when the
+			// object was absorbed by similarity.
+			s.applyNewestDescription(ctx, mergedProps, src.Properties, existingTarget.Properties, src.ExtractionJobID, existingTarget.ExtractionJobID)
 
 			// Only write a new version if something actually changed.
 			if len(changedKeys) > 0 || provChanged {
@@ -6186,9 +6208,9 @@ type mergeSettings struct {
 	SimilarityAction string
 	// CanonicalConflictAction is the strategy for canonical-id-matched conflicting objects.
 	// Mirrors the legacy ConflictStrategy: "enrich", "overwrite", "preserve_target", "block".
-	// The additional "newest" action is only produced by the partial_newest preset:
-	// it auto-resolves a same-entity re-extraction's property drift in favour of
-	// the newer (source) values, but keeps identity drift for review.
+	// The additional "newest" action resolves a conflict deterministically in
+	// favour of the newer side (max `_sources[].extracted_at`, falling back to the
+	// producing job's created_at); a tie is left for review.
 	CanonicalConflictAction string
 }
 
@@ -6211,13 +6233,19 @@ var mergePolicyPresets = map[string]mergeSettings{
 	// target but leaves ambiguous items — canonical conflicts and
 	// semantically-similar duplicates — on the source branch for review.
 	"partial": {true, defaultMergeSimilarityThreshold, "suggest", "preserve_target"},
-	// "partial_newest" is "partial" plus opt-in auto-resolution of same-entity
-	// re-extraction drift: when a source object matches a target HEAD by its
-	// natural (type, namespace, key) identity, a conflicting property takes the
-	// newer (source) value instead of being parked for review. Identity drift
-	// (the entity's name property) still conflicts, and ordinary canonical
-	// conflicts are still preserved on the target. This drains the
-	// re-extraction backlog without silently renaming entities (#1222).
+	// "newest" resolves every canonical conflict deterministically in favour of
+	// the newer side (max `_sources[].extracted_at`, falling back to the
+	// producing job's created_at); a tie is left for review. It does not run the
+	// similarity probe, so semantically-similar (but non-matching) duplicates
+	// are simply added.
+	"newest": {false, 0, "", "newest"},
+	// "partial_newest" is "partial" plus the deterministic newest-wins
+	// canonical-conflict resolution: when a source object matches a target HEAD
+	// by its natural (type, namespace, key) identity, a conflicting property
+	// takes the newer side's value instead of being parked for review. Ordinary
+	// canonical conflicts are resolved the same way; ties are still left for
+	// review, and semantically-similar duplicates still need a reviewer. This
+	// drains the re-extraction backlog without a human in the loop (#1222).
 	"partial_newest": {true, defaultMergeSimilarityThreshold, "suggest", "newest"},
 }
 
@@ -6228,6 +6256,7 @@ var mergeConflictStrategies = map[string]struct{}{
 	"overwrite":       {},
 	"preserve_target": {},
 	"block":           {},
+	"newest":          {},
 }
 
 // MergeConflictStrategyNames lists the accepted legacy conflict strategies in a
@@ -6362,6 +6391,16 @@ func bytesEqual(a, b []byte) bool {
 func findConflictingPaths(sourceProps, targetProps map[string]any) []string {
 	conflicts := []string{}
 	for k, sv := range sourceProps {
+		// Provenance / internal keys (leading underscore: `_sources`,
+		// `_extraction_job_id`, `_source_id`, `_document_version`, …) are never
+		// conflicts — they differ on every re-extraction by design and are
+		// unioned during merge (applyProvenanceUnion), not compared.
+		// The top-level `description` is likewise non-conflicting: it is reworded
+		// on every re-extraction and is resolved newest-wins during merge (L3),
+		// so treating it as a conflict would park the branch forever.
+		if strings.HasPrefix(k, "_") || k == "description" {
+			continue
+		}
 		tv, exists := targetProps[k]
 		if !exists {
 			continue // only on source — not a conflict
@@ -6375,6 +6414,62 @@ func findConflictingPaths(sourceProps, targetProps map[string]any) []string {
 	}
 	sort.Strings(conflicts)
 	return conflicts
+}
+
+// sideRecency returns the best available monotonic timestamp for one side of a
+// merge: the max `_sources[].extracted_at` on its properties, falling back to
+// the producing extraction job's created_at. ok is false when neither is
+// available, which callers treat as "undeterminable".
+func (s *Service) sideRecency(ctx context.Context, props map[string]any, jobID *uuid.UUID) (time.Time, bool) {
+	if t, ok := newestExtractedAt(props); ok {
+		return t, true
+	}
+	if jobID != nil {
+		if t, err := s.repo.GetExtractionJobCreatedAt(ctx, *jobID); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// compareRecency reports which of two merge sides is more recent: -1 when src
+// is newer, 1 when tgt is newer, and 0 on a tie or when either side has no
+// determinable recency. The newest strategy treats 0 as preserve_target (leave).
+func (s *Service) compareRecency(ctx context.Context, srcProps, tgtProps map[string]any, srcJobID, tgtJobID *uuid.UUID) int {
+	srcT, srcOK := s.sideRecency(ctx, srcProps, srcJobID)
+	tgtT, tgtOK := s.sideRecency(ctx, tgtProps, tgtJobID)
+	if !srcOK || !tgtOK {
+		return 0 // undeterminable — treat as a tie
+	}
+	if srcT.After(tgtT) {
+		return -1
+	}
+	if tgtT.After(srcT) {
+		return 1
+	}
+	return 0
+}
+
+// applyNewestDescription overwrites merged["description"] with the newer side's
+// value (L3). When only one side has a description it is kept; when both do,
+// recency decides, defaulting to the source when it is undeterminable — the
+// merging (staging) branch is typically the newer extraction. It never drops a
+// description that is only present on one side.
+func (s *Service) applyNewestDescription(ctx context.Context, merged, srcProps, tgtProps map[string]any, srcJobID, tgtJobID *uuid.UUID) {
+	srcDesc, srcHas := srcProps["description"]
+	tgtDesc, tgtHas := tgtProps["description"]
+	switch {
+	case srcHas && tgtHas:
+		if s.compareRecency(ctx, srcProps, tgtProps, srcJobID, tgtJobID) > 0 {
+			merged["description"] = tgtDesc
+		} else {
+			merged["description"] = srcDesc
+		}
+	case srcHas:
+		merged["description"] = srcDesc
+	case tgtHas:
+		merged["description"] = tgtDesc
+	}
 }
 
 // classifyMergeObject classifies a single object for a branch merge.

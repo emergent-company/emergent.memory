@@ -1230,13 +1230,13 @@ func (s *Service) legacyToolDefinitions() []ToolDefinition {
 					},
 					"conflict_strategy": {
 						Type:        "string",
-						Description: "How to handle conflicting objects (same key, different value). Options: \"enrich\" (default — target wins same keys, source adds new keys), \"overwrite\" (source wins all conflicting keys), \"preserve_target\" (skip conflict objects, keep target), \"block\" (abort if any conflicts exist, legacy behavior). Ignored when policy is set.",
+						Description: "How to handle conflicting objects (same key, different value). Options: \"enrich\" (default — target wins same keys, source adds new keys), \"overwrite\" (source wins all conflicting keys), \"preserve_target\" (skip conflict objects, keep target), \"block\" (abort if any conflicts exist, legacy behavior), \"newest\" (the newer side wins; a tie is left for review). Ignored when policy is set.",
 						// Derived from graph's table, like the policy enum above.
 						Enum: graph.MergeConflictStrategyNames(),
 					},
 					"policy": {
 						Type:        "string",
-						Description: "Named merge preset: \"manual\" (pure diff, no automatic conflict or similarity resolution — use with execute=false to compare a branch against its target), \"enrich\" (default), \"enrich_no_sim\", \"theirs\", \"mine\", \"mine_no_sim\", \"suggest\", \"partial\". Takes precedence over conflict_strategy. An unrecognised value is rejected rather than silently defaulted.",
+						Description: "Named merge preset: \"manual\" (pure diff, no automatic conflict or similarity resolution — use with execute=false to compare a branch against its target), \"enrich\" (default), \"enrich_no_sim\", \"theirs\", \"mine\", \"mine_no_sim\", \"suggest\", \"partial\", \"newest\", \"partial_newest\". Takes precedence over conflict_strategy. An unrecognised value is rejected rather than silently defaulted.",
 						// Derived from graph's preset table: the enum a client sees is
 						// the set the service actually accepts (#2231).
 						Enum: graph.MergePolicyNames(),

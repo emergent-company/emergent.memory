@@ -41,8 +41,8 @@ WRONG — extracting document lines:
 
 RIGHT — extracting real objects:
   {"name": "Monica Geller", "type": "Character", "properties": {"occupation": "chef", "workplace": "Javu restaurant", "tenure": "three years"}}
-  {"name": "Carol", "type": "Character", "properties": {"relationship_to_ross": "ex-wife"}}
-  {"name": "Carol moving out", "type": "Event", "properties": {"description": "Carol moved out", "timing": "yesterday", "affected_person": "Ross"}}
+  {"name": "Carol", "type": "Character", "properties": {"relationship_status": "separated"}}
+  {"name": "Carol moving out", "type": "Event", "description": "Carol moved out", "properties": {"timing": "yesterday", "participants": "Ross"}}
 
 ## Rules
 

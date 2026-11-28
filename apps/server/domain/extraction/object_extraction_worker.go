@@ -996,7 +996,7 @@ func (w *ObjectExtractionWorker) autoMergePolicy(ctx context.Context, projectID 
 // BranchMergeRequest accepts; anything unrecognised falls back to partial.
 func resolveAutoMergePolicy(policy string) string {
 	switch policy {
-	case "partial", "enrich", "partial_newest":
+	case "partial", "enrich", "partial_newest", "newest":
 		return policy
 	default:
 		return "partial"
