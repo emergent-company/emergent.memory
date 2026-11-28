@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -538,10 +539,24 @@ func decodeJSONLine(line []byte, v any) error {
 	return nil
 }
 
-// validateSeedObject checks required fields for a SeedObjectRecord.
+// maxSeedObjectNameRunes mirrors the server's CreateGraphObjectRequest limit
+// (validate:"omitempty,max=512"), so an over-long seed title fails offline
+// instead of aborting the apply mid-run.
+const maxSeedObjectNameRunes = 512
+
+// validateSeedObject checks required fields for a SeedObjectRecord and
+// normalizes the optional name. The server trims surrounding whitespace, so the
+// CLI trims it too: an all-whitespace name is no name, and a round trip through
+// dump/seed stays byte-identical.
 func validateSeedObject(r *SeedObjectRecord) error {
 	if r.Type == "" {
 		return fmt.Errorf("type is required")
+	}
+	if r.Name != "" {
+		r.Name = strings.TrimSpace(r.Name)
+		if n := utf8.RuneCountInString(r.Name); n > maxSeedObjectNameRunes {
+			return fmt.Errorf("name is too long (%d characters; max %d)", n, maxSeedObjectNameRunes)
+		}
 	}
 	return nil
 }

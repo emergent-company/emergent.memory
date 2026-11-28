@@ -119,6 +119,9 @@ func (d *Dumper) dumpObjects(ctx context.Context, outputDir string) (map[string]
 				Properties: obj.Properties,
 				Labels:     obj.Labels,
 			}
+			if obj.Name != nil {
+				rec.Name = *obj.Name
+			}
 			if obj.Key != nil {
 				rec.Key = *obj.Key
 				entityKeyMap[obj.EntityID] = *obj.Key

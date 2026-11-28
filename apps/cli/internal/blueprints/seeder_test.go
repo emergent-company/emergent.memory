@@ -872,3 +872,102 @@ func TestSeeder_BatchedLookup_FollowsNextCursor(t *testing.T) {
 		t.Errorf("expected ObjectsCreated=0, got %d", result.ObjectsCreated)
 	}
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Seeder — display name (title) forwarding
+// ──────────────────────────────────────────────────────────────────────────────
+
+func TestSeeder_ForwardsNameOnCreate(t *testing.T) {
+	const entityID = "eid-001"
+
+	var createItems []sdkgraph.CreateObjectRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/objects/search"):
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{Items: nil, Total: 0})
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/objects/bulk"):
+			var req sdkgraph.BulkCreateObjectsRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode bulk create: %v", err)
+			}
+			createItems = req.Items
+			obj := &sdkgraph.GraphObject{EntityID: entityID, Type: "Screen"}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(sdkgraph.BulkCreateObjectsResponse{
+				Success: 1,
+				Results: []sdkgraph.BulkCreateObjectResult{{Index: 0, Success: true, Object: obj}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client := newTestGraphClient(srv.URL)
+	var buf bytes.Buffer
+	s := blueprints.NewSeeder(client, false, false, &buf)
+
+	objects := []blueprints.SeedObjectRecord{{Type: "Screen", Key: "chat-room", Name: "Chat Room"}}
+	if _, err := s.Run(context.Background(), objects, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(createItems) != 1 {
+		t.Fatalf("expected 1 create item, got %d", len(createItems))
+	}
+	if createItems[0].Name == nil || *createItems[0].Name != "Chat Room" {
+		t.Fatalf("expected name \"Chat Room\" forwarded, got %v", createItems[0].Name)
+	}
+	if _, ok := createItems[0].Properties["name"]; ok {
+		t.Errorf("name must travel as the request Name field, not as a property: %v", createItems[0].Properties)
+	}
+}
+
+func TestSeeder_ForwardsNameOnUpsert(t *testing.T) {
+	const entityID = "eid-existing"
+
+	var upsertBody sdkgraph.BulkUpsertObjectsRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/objects/search"):
+			key := "existing-key"
+			obj := &sdkgraph.GraphObject{EntityID: entityID, Type: "Screen", Key: &key}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{
+				Items: []*sdkgraph.GraphObject{obj}, Total: 1,
+			})
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/objects/bulk-upsert"):
+			if err := json.NewDecoder(r.Body).Decode(&upsertBody); err != nil {
+				t.Fatalf("decode bulk-upsert: %v", err)
+			}
+			obj := &sdkgraph.GraphObject{EntityID: entityID, Type: "Screen"}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(sdkgraph.BulkUpsertObjectsResponse{
+				Success: 1,
+				Results: []sdkgraph.BulkUpsertObjectResult{
+					{Index: 0, Success: true, Created: false, Object: obj},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client := newTestGraphClient(srv.URL)
+	var buf bytes.Buffer
+	s := blueprints.NewSeeder(client, false, true /* upgrade */, &buf)
+
+	objects := []blueprints.SeedObjectRecord{{Type: "Screen", Key: "existing-key", Name: "Chat Room"}}
+	if _, err := s.Run(context.Background(), objects, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(upsertBody.Items) != 1 {
+		t.Fatalf("expected 1 upsert item, got %d", len(upsertBody.Items))
+	}
+	if upsertBody.Items[0].Name == nil || *upsertBody.Items[0].Name != "Chat Room" {
+		t.Fatalf("expected name \"Chat Room\" forwarded on upsert, got %v", upsertBody.Items[0].Name)
+	}
+}

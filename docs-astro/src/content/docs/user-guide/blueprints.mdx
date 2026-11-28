@@ -528,6 +528,11 @@ See [Schema § Schema packs](/developer-guide/schema/#schema-packs) for the pack
   re-install duplicates them.
 - **Use `srcKey`/`dstKey` in relationships**, not raw entity IDs — IDs do not
   survive an apply into another project.
+- **Give seed objects a `name` to set their title.** `name` is the label rendered
+  in the UI, lists and search results; `properties.name` / `properties.title`
+  are ordinary properties and never become the display title, so a seed without
+  `name` renders as `type · #ref`. `memory blueprints dump` writes `name` back,
+  so a dump → install round trip keeps titles.
 - **Published means immutable.** Correcting a published version requires
   `new-version`; re-publishing is refused.
 - **Unapply is scoped.** Skills and seed data stay; only agents and pack

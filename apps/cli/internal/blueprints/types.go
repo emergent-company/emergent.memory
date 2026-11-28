@@ -439,8 +439,13 @@ const (
 // SeedObjectRecord is one JSONL line from a seed/objects/<Type>.jsonl file.
 // Each line represents one object to create or upsert.
 type SeedObjectRecord struct {
-	Type       string         `json:"type"`
-	Key        string         `json:"key,omitempty"`
+	Type string `json:"type"`
+	Key  string `json:"key,omitempty"`
+	// Name is the object's human title — the value rendered in the UI, lists and
+	// search results. It is the only title carrier: properties["name"] and
+	// properties["title"] are ordinary properties and are never read as a title
+	// (#824). A seed without a name creates a nameless object on purpose.
+	Name       string         `json:"name,omitempty"`
 	Status     string         `json:"status,omitempty"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Labels     []string       `json:"labels,omitempty"`
