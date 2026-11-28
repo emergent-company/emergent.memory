@@ -112,3 +112,47 @@ func TestNewestPresetAndStrategy(t *testing.T) {
 	got = resolveMergePolicy("", "newest", 0)
 	assert.Equal(t, "newest", got.CanonicalConflictAction)
 }
+
+// TestFindConflictingPathsNormalizesStringCaseAndWhitespace pins the case-fold +
+// trim + internal-whitespace-collapse equality: a case/whitespace-only drift
+// (e.g. "Data processor" vs "data processor") is not a conflict, but a genuine
+// value difference (e.g. "Masseuse" vs "Masseuse and musician") still is.
+func TestFindConflictingPathsNormalizesStringCaseAndWhitespace(t *testing.T) {
+	src := map[string]any{"job_title": "Data processor", "occupation": "Masseuse"}
+	tgt := map[string]any{"job_title": "data processor", "occupation": "Masseuse and musician"}
+
+	assert.Equal(t, []string{"/occupation"}, findConflictingPaths(src, tgt),
+		"case/whitespace-only drift must not conflict; a genuine value difference must")
+}
+
+// TestValuesEqual pins the conflict-detection value comparison.
+func TestValuesEqual(t *testing.T) {
+	assert.True(t, valuesEqual("Data processor", "data processor"))
+	assert.True(t, valuesEqual("  data   processor  ", "DATA PROCESSOR"))
+	assert.False(t, valuesEqual("Masseuse", "Masseuse and musician"))
+	assert.True(t, valuesEqual([]any{"a", "b"}, []any{"a", "b"}))
+	assert.False(t, valuesEqual([]any{"a"}, []any{"b"}))
+	assert.True(t, valuesEqual(map[string]any{"a": 1}, map[string]any{"a": 1}))
+	assert.False(t, valuesEqual("x", 1), "a string and a number are never equal")
+}
+
+// TestReconcilePresetAndStrategy pins the new opt-in "reconcile" preset and
+// legacy conflict strategy: accepted, advertised, no similarity probe, action
+// "reconcile", and the per-run cap default.
+func TestReconcilePresetAndStrategy(t *testing.T) {
+	require.NoError(t, validateMergePolicy("reconcile", ""))
+	require.Contains(t, MergeConflictStrategyNames(), "reconcile")
+	require.Contains(t, MergePolicyNames(), "reconcile")
+
+	got := resolveMergePolicy("reconcile", "", 0)
+	assert.False(t, got.SimilarityEnabled)
+	assert.Equal(t, "reconcile", got.CanonicalConflictAction)
+	assert.Equal(t, defaultReconcileMaxPerRun, got.ReconcileMaxPerRun)
+	assert.Equal(t, mergePolicyPresets["reconcile"], got)
+
+	// The legacy conflict strategy "reconcile" resolves through the same action
+	// and defaults the cap.
+	got = resolveMergePolicy("", "reconcile", 0)
+	assert.Equal(t, "reconcile", got.CanonicalConflictAction)
+	assert.Equal(t, defaultReconcileMaxPerRun, got.ReconcileMaxPerRun)
+}

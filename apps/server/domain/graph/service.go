@@ -106,6 +106,11 @@ type Service struct {
 	// when a staging branch is merged. Nil when not wired (no-op).
 	branchNotificationResolver BranchNotificationResolver
 
+	// conflictReconciler resolves residual conflicting property values under the
+	// "reconcile" merge strategy. Nil keeps the preserve_target fallback (see
+	// SetConflictReconciler).
+	conflictReconciler ConflictReconciler
+
 	// bulkUpdateMaxItems caps the number of items accepted by a bulk-update
 	// request (default 100, overridden from config).
 	bulkUpdateMaxItems int
@@ -256,6 +261,13 @@ func (s *Service) WithReindexPageSize(pageSize int) *Service {
 func (s *Service) WithBranchNotificationResolver(resolver BranchNotificationResolver) *Service {
 	s.branchNotificationResolver = resolver
 	return s
+}
+
+// SetConflictReconciler injects the "reconcile" conflict resolver. Nil-safe:
+// without it, a "reconcile" merge leaves conflicting objects for review
+// (preserve_target) instead of asking an LLM to combine them.
+func (s *Service) SetConflictReconciler(r ConflictReconciler) {
+	s.conflictReconciler = r
 }
 
 // emitObjectCreated emits a graph_object entity.created event (no-op if events not wired).
@@ -5228,6 +5240,9 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 
 	// Resolve the effective merge policy and settings.
 	settings := resolveMergePolicy(req.Policy, req.ConflictStrategy, req.SimilarityThreshold)
+	if req.ReconcileMaxPerRun > 0 {
+		settings.ReconcileMaxPerRun = req.ReconcileMaxPerRun
+	}
 	strategy := settings.CanonicalConflictAction
 
 	// ── Embedding readiness gate ───────────────────────────────────────────
@@ -5334,6 +5349,27 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 				sum.Resolution = "skipped"
 				skippedCount++
 				leftForReview++
+			case "reconcile":
+				// Mirror applyMerge: a conflict with no residual (after case/
+				// whitespace normalisation) reconciles deterministically; a
+				// genuine residual needs a wired reconciler to resolve, else it
+				// is left for review.
+				src := sourceObjects[sum.CanonicalID]
+				var tgt *BranchObjectHead
+				if sum.SameEntityTargetID != nil {
+					tgt = targetObjects[*sum.SameEntityTargetID]
+				} else {
+					tgt = targetObjects[sum.CanonicalID]
+				}
+				if src != nil && tgt != nil &&
+					(len(findConflictingPaths(src.Properties, tgt.Properties)) == 0 || s.conflictReconciler != nil) {
+					sum.Resolution = "reconciled"
+					resolvedCount++
+				} else {
+					sum.Resolution = "skipped"
+					skippedCount++
+					leftForReview++
+				}
 			}
 		case "similar":
 			switch settings.SimilarityAction {
@@ -5420,9 +5456,26 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 
 	// If execute is requested, apply merge transactionally.
 	if req.Execute && (conflictCount == 0 && relConflict == 0 || strategy != "block") {
-		appliedCount, err := s.applyMerge(ctx, projectID, targetBranchID, settings, objectSummaries, relSummaries, sourceObjects, targetObjects, sourceRels, targetRels) //nolint:staticcheck
+		var reconcileLeft int
+		appliedCount, err := s.applyMerge(ctx, projectID, targetBranchID, settings, objectSummaries, relSummaries, sourceObjects, targetObjects, sourceRels, targetRels, &reconcileLeft) //nolint:staticcheck
 		if err != nil {
 			return nil, fmt.Errorf("apply merge: %w", err)
+		}
+		// The reconcile pre-compute is optimistic (it cannot know whether the
+		// wired reconciler will succeed), so a wired reconciler that errored or
+		// hit the cap leaves objects for review that the pre-compute counted as
+		// resolved. Correct the accounting so the branch is NOT closed over
+		// those unmerged objects.
+		if reconcileLeft > 0 {
+			leftForReview += reconcileLeft
+			resolvedCount -= reconcileLeft
+			if resolvedCount < 0 {
+				resolvedCount = 0
+			}
+			skippedCount += reconcileLeft
+			response.LeftForReviewCount = leftForReview
+			response.ResolvedCount = resolvedCount
+			response.SkippedCount = skippedCount
 		}
 		response.Applied = true
 		response.AppliedObjects = &appliedCount
@@ -5509,7 +5562,11 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 // It clones "added" objects/relationships onto the target branch, creates
 // new versions for "fast_forward" objects, and absorbs "similar" objects
 // into existing target entities per the similarity action in settings.
-// Returns the total number of objects+relationships written.
+// Returns the total number of objects+relationships written. When reconcileLeft
+// is non-nil, it is set to the number of "reconcile" conflicts that fell back
+// to preserve_target but were NOT already counted as left-for-review by the
+// pre-compute pass (i.e. a wired reconciler errored or hit the per-run cap), so
+// the caller can correct the left-for-review accounting.
 func (s *Service) applyMerge(
 	ctx context.Context,
 	projectID uuid.UUID,
@@ -5521,6 +5578,7 @@ func (s *Service) applyMerge(
 	targetObjects map[uuid.UUID]*BranchObjectHead,
 	sourceRels map[uuid.UUID]*BranchRelationshipHead,
 	targetRels map[uuid.UUID]*BranchRelationshipHead,
+	reconcileLeft *int,
 ) (int, error) {
 	strategy := settings.CanonicalConflictAction
 	tx, err := s.repo.BeginTx(ctx)
@@ -5542,6 +5600,16 @@ func (s *Service) applyMerge(
 	var relEmbeddingIDs []string
 
 	appliedCount := 0
+
+	// Reconcile bookkeeping: the per-run cap on ConflictReconciler calls, and the
+	// running count of calls made this merge. Conflicts past the cap fall back to
+	// preserve_target.
+	reconcileCap := settings.ReconcileMaxPerRun
+	if reconcileCap <= 0 {
+		reconcileCap = defaultReconcileMaxPerRun
+	}
+	reconcileCalls := 0
+	reconcileLeftCount := 0
 
 	// ── Objects ──────────────────────────────────────────────────────────────
 
@@ -5751,6 +5819,10 @@ func (s *Service) applyMerge(
 			var mergeResolution string
 			var enrichedKeys []string
 			var sourceWins bool
+			// Reconcile audit marker: recorded in the change_summary when the
+			// reconciler resolved this object.
+			var reconcileModel string
+			var reconcileKeys []string
 			switch strategy {
 			case "overwrite":
 				// Source wins all conflicting keys.
@@ -5779,6 +5851,55 @@ func (s *Service) applyMerge(
 				default: // tie / undeterminable — leave for review
 					continue
 				}
+			case "reconcile":
+				// Deterministic-first: build the union of non-conflicting keys
+				// (target wins on a tie). Provenance union (L0) and newest-wins
+				// description (L3) are applied by the shared post-switch code
+				// below, exactly like the other strategies. Only the residual
+				// genuinely conflicting keys (after case/whitespace
+				// normalisation) reach the reconciler.
+				base := mergeProps(src.Properties, prevHead.Properties)
+
+				residual := findConflictingPaths(src.Properties, prevHead.Properties)
+				if len(residual) == 0 {
+					// No genuine conflict after normalisation — write the
+					// deterministic result, no model call.
+					mergedProps = base
+					mergeResolution = "reconciled"
+					break
+				}
+				if s.conflictReconciler == nil {
+					// No reconciler wired — the pre-compute pass already counted
+					// this as left-for-review, so it needs no correction here.
+					continue
+				}
+				if reconcileCalls >= reconcileCap {
+					// Per-run cap exhausted — preserve target (leave for review).
+					reconcileLeftCount++
+					summary.Resolution = "skipped"
+					continue
+				}
+				reconciled, model, err := s.reconcileResidual(ctx, projectID, prevHead.Type, src.Properties, prevHead.Properties, residual)
+				if err != nil {
+					s.log.Warn("reconcile: reconciler failed, leaving for review",
+						slog.String("canonical_id", cid.String()),
+						slog.String("type", prevHead.Type),
+						logger.Error(err))
+					reconcileLeftCount++
+					summary.Resolution = "skipped"
+					continue
+				}
+				reconcileCalls++
+				for key, v := range reconciled {
+					base[key] = v
+				}
+				mergedProps = base
+				mergeResolution = "reconciled"
+				reconcileModel = model
+				for _, path := range residual {
+					reconcileKeys = append(reconcileKeys, strings.TrimPrefix(path, "/"))
+				}
+				sort.Strings(reconcileKeys)
 			default: // "enrich"
 				// Target wins same keys; source adds new keys only.
 				mergedProps = mergeProps(src.Properties, prevHead.Properties)
@@ -5820,6 +5941,12 @@ func (s *Service) applyMerge(
 					changeSummary["overwritten_keys"] = enrichedKeys
 				} else {
 					changeSummary["enriched_keys"] = enrichedKeys
+				}
+			}
+			if mergeResolution == "reconciled" && len(reconcileKeys) > 0 {
+				changeSummary["_reconciled"] = map[string]any{
+					"model": reconcileModel,
+					"keys":  reconcileKeys,
 				}
 			}
 			mergedClass, mergedOwner, ownerErr := resolveMergedOwner(src.DataClass, src.OwnerSourceID, prevHead.DataClass, prevHead.OwnerSourceID)
@@ -6159,6 +6286,9 @@ func (s *Service) applyMerge(
 		}
 	}
 
+	if reconcileLeft != nil {
+		*reconcileLeft = reconcileLeftCount
+	}
 	return appliedCount, nil
 }
 
@@ -6210,35 +6340,46 @@ type mergeSettings struct {
 	// Mirrors the legacy ConflictStrategy: "enrich", "overwrite", "preserve_target", "block".
 	// The additional "newest" action resolves a conflict deterministically in
 	// favour of the newer side (max `_sources[].extracted_at`, falling back to the
-	// producing job's created_at); a tie is left for review.
+	// producing job's created_at); a tie is left for review. The "reconcile"
+	// action deterministically merges non-conflicting keys and asks the wired
+	// ConflictReconciler to COMBINE only the residual conflicting values.
 	CanonicalConflictAction string
+	// ReconcileMaxPerRun caps how many ConflictReconciler calls a single merge
+	// may make before subsequent conflicts fall back to preserve_target. Only
+	// consulted under the "reconcile" action; zero uses the default.
+	ReconcileMaxPerRun int
 }
 
 // defaultMergeSimilarityThreshold is the cosine cutoff used by the presets that
 // enable the similarity probe.
 const defaultMergeSimilarityThreshold float32 = 0.92
 
+// defaultReconcileMaxPerRun caps how many ConflictReconciler calls one merge
+// may make before it falls back to preserve_target. A project can override it
+// via pipeline.MergePolicy.reconcile_max_per_run.
+const defaultReconcileMaxPerRun = 50
+
 // mergePolicyPresets are the named policies BranchMergeRequest.Policy accepts.
 // resolveMergePolicy reads this table and validateMergePolicy rejects anything
 // that is not in it, so the two can never disagree about what is valid.
 var mergePolicyPresets = map[string]mergeSettings{
-	"manual":        {false, 0, "", ""},
-	"enrich":        {true, defaultMergeSimilarityThreshold, "enrich", "enrich"},
-	"enrich_no_sim": {false, 0, "", "enrich"},
-	"theirs":        {true, defaultMergeSimilarityThreshold, "theirs", "preserve_target"},
-	"mine":          {true, defaultMergeSimilarityThreshold, "mine", "overwrite"},
-	"mine_no_sim":   {false, 0, "", "overwrite"},
-	"suggest":       {true, defaultMergeSimilarityThreshold, "suggest", "block"},
+	"manual":        {false, 0, "", "", 0},
+	"enrich":        {true, defaultMergeSimilarityThreshold, "enrich", "enrich", 0},
+	"enrich_no_sim": {false, 0, "", "enrich", 0},
+	"theirs":        {true, defaultMergeSimilarityThreshold, "theirs", "preserve_target", 0},
+	"mine":          {true, defaultMergeSimilarityThreshold, "mine", "overwrite", 0},
+	"mine_no_sim":   {false, 0, "", "overwrite", 0},
+	"suggest":       {true, defaultMergeSimilarityThreshold, "suggest", "block", 0},
 	// "partial" merges clean changes (added/fast_forward/deleted) into the
 	// target but leaves ambiguous items — canonical conflicts and
 	// semantically-similar duplicates — on the source branch for review.
-	"partial": {true, defaultMergeSimilarityThreshold, "suggest", "preserve_target"},
+	"partial": {true, defaultMergeSimilarityThreshold, "suggest", "preserve_target", 0},
 	// "newest" resolves every canonical conflict deterministically in favour of
 	// the newer side (max `_sources[].extracted_at`, falling back to the
 	// producing job's created_at); a tie is left for review. It does not run the
 	// similarity probe, so semantically-similar (but non-matching) duplicates
 	// are simply added.
-	"newest": {false, 0, "", "newest"},
+	"newest": {false, 0, "", "newest", 0},
 	// "partial_newest" is "partial" plus the deterministic newest-wins
 	// canonical-conflict resolution: when a source object matches a target HEAD
 	// by its natural (type, namespace, key) identity, a conflicting property
@@ -6246,7 +6387,14 @@ var mergePolicyPresets = map[string]mergeSettings{
 	// canonical conflicts are resolved the same way; ties are still left for
 	// review, and semantically-similar duplicates still need a reviewer. This
 	// drains the re-extraction backlog without a human in the loop (#1222).
-	"partial_newest": {true, defaultMergeSimilarityThreshold, "suggest", "newest"},
+	"partial_newest": {true, defaultMergeSimilarityThreshold, "suggest", "newest", 0},
+	// "reconcile" resolves every canonical conflict deterministically-first,
+	// then asks the wired ConflictReconciler (an LLM) to COMBINE only the
+	// residual conflicting values (prefer the richer/union of detail). It does
+	// not run the similarity probe; when no reconciler is wired, or the
+	// reconciler errors, each conflicting object falls back to preserve_target.
+	// Opt-in — the default "partial" policy is unchanged.
+	"reconcile": {false, 0, "", "reconcile", defaultReconcileMaxPerRun},
 }
 
 // mergeConflictStrategies are the legacy ConflictStrategy values, consulted only
@@ -6257,6 +6405,7 @@ var mergeConflictStrategies = map[string]struct{}{
 	"preserve_target": {},
 	"block":           {},
 	"newest":          {},
+	"reconcile":       {},
 }
 
 // MergeConflictStrategyNames lists the accepted legacy conflict strategies in a
@@ -6327,6 +6476,13 @@ func resolveMergePolicy(policy, legacyConflictStrategy string, thresholdOverride
 		}
 	}
 
+	// The reconcile action always gets the per-run reconciler cap; the preset
+	// already carries it, and the legacy-strategy path is defaulted here so a
+	// "reconcile" conflict_strategy is not unbounded.
+	if s.CanonicalConflictAction == "reconcile" && s.ReconcileMaxPerRun <= 0 {
+		s.ReconcileMaxPerRun = defaultReconcileMaxPerRun
+	}
+
 	// Caller can override the threshold regardless of policy.
 	if thresholdOverride > 0 && thresholdOverride <= 1 {
 		s.SimilarityThreshold = thresholdOverride
@@ -6386,8 +6542,9 @@ func bytesEqual(a, b []byte) bool {
 
 // findConflictingPaths returns the property keys that differ between source and
 // target. A key is a conflict only when both branches have it AND the values
-// differ (JSON-serialised comparison). Keys present on only one side are not
-// conflicts — they are additive changes that merge cleanly.
+// differ (case/whitespace-normalised for strings, JSON deep-equal otherwise).
+// Keys present on only one side are not conflicts — they are additive changes
+// that merge cleanly.
 func findConflictingPaths(sourceProps, targetProps map[string]any) []string {
 	conflicts := []string{}
 	for k, sv := range sourceProps {
@@ -6405,15 +6562,40 @@ func findConflictingPaths(sourceProps, targetProps map[string]any) []string {
 		if !exists {
 			continue // only on source — not a conflict
 		}
-		// Compare by JSON representation for deep equality
-		sb, _ := json.Marshal(sv)
-		tb, _ := json.Marshal(tv)
-		if string(sb) != string(tb) {
+		if !valuesEqual(sv, tv) {
 			conflicts = append(conflicts, "/"+k)
 		}
 	}
 	sort.Strings(conflicts)
 	return conflicts
+}
+
+// valuesEqual reports whether two property values are equal for conflict
+// detection. Two strings match when they agree after case-fold, trim and
+// internal-whitespace collapse, so a case-only or whitespace-only drift (e.g.
+// "Data processor" vs "data processor") is not a conflict. Non-strings keep
+// JSON deep equality, so genuinely different values (e.g. "Masseuse" vs
+// "Masseuse and musician") still conflict.
+func valuesEqual(a, b any) bool {
+	as, aIsStr := a.(string)
+	bs, bIsStr := b.(string)
+	if aIsStr && bIsStr {
+		return normalizeStringValue(as) == normalizeStringValue(bs)
+	}
+	aj, errA := json.Marshal(a)
+	bj, errB := json.Marshal(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return string(aj) == string(bj)
+}
+
+// normalizeStringValue case-folds, trims and collapses internal whitespace so a
+// purely presentational difference in a string value does not count as a
+// conflict. strings.Fields both trims leading/trailing whitespace and collapses
+// every internal run to a single space.
+func normalizeStringValue(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }
 
 // sideRecency returns the best available monotonic timestamp for one side of a
@@ -6470,6 +6652,75 @@ func (s *Service) applyNewestDescription(ctx context.Context, merged, srcProps, 
 	case tgtHas:
 		merged["description"] = tgtDesc
 	}
+}
+
+// reconcilePropertyDefs returns the declared property schema for one object
+// type, or nil when the project has no schema provider or the type is unknown.
+// The reconcile path uses it to validate the reconciler's answers before
+// applying them; a nil result means "accept values as supplied".
+func (s *Service) reconcilePropertyDefs(ctx context.Context, projectID uuid.UUID, typeName string) map[string]agents.PropertyDef {
+	if s.schemaProvider == nil {
+		return nil
+	}
+	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+	if err != nil || schemas == nil {
+		return nil
+	}
+	obj, ok := schemas.ObjectSchemas[typeName]
+	if !ok {
+		return nil
+	}
+	return obj.Properties
+}
+
+// reconcileResidual asks the wired ConflictReconciler to COMBINE the residual
+// conflicting keys of one object and returns the reconciled values keyed by
+// bare property name, plus the model name used (for the audit marker). Every
+// returned value is validated against the type's declared property schema, and
+// the reconciler must answer every conflicting key; any failure returns an
+// error, which the caller maps to the preserve_target fallback.
+func (s *Service) reconcileResidual(ctx context.Context, projectID uuid.UUID, typeName string, srcProps, tgtProps map[string]any, residual []string) (map[string]any, string, error) {
+	conflicts := make(map[string]ConflictValue, len(residual))
+	for _, path := range residual {
+		key := strings.TrimPrefix(path, "/")
+		conflicts[key] = ConflictValue{Source: srcProps[key], Target: tgtProps[key]}
+	}
+
+	defs := s.reconcilePropertyDefs(ctx, projectID, typeName)
+	resolved, model, err := s.conflictReconciler.Reconcile(ctx, ConflictReconcileRequest{
+		ProjectID:    projectID,
+		TypeName:     typeName,
+		PropertyDefs: defs,
+		Conflicts:    conflicts,
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("reconciler: %w", err)
+	}
+
+	out := make(map[string]any, len(conflicts))
+	for key, v := range resolved {
+		if _, asked := conflicts[key]; !asked {
+			continue // ignore keys the reconciler invented
+		}
+		def := agents.PropertyDef{}
+		if defs != nil {
+			def = defs[key]
+		}
+		coerced, err := coercePropertyValue(v, def)
+		if err != nil {
+			return nil, "", fmt.Errorf("reconciled value for %q violates schema: %w", key, err)
+		}
+		out[key] = coerced
+	}
+	// The reconciler must resolve every conflicting key; a partial answer is a
+	// failure (fall back) rather than silently keeping the target for a key the
+	// model should have combined.
+	for key := range conflicts {
+		if _, ok := out[key]; !ok {
+			return nil, "", fmt.Errorf("reconciler did not resolve conflicting key %q", key)
+		}
+	}
+	return out, model, nil
 }
 
 // classifyMergeObject classifies a single object for a branch merge.

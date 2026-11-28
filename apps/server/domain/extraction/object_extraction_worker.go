@@ -996,7 +996,7 @@ func (w *ObjectExtractionWorker) autoMergePolicy(ctx context.Context, projectID 
 // BranchMergeRequest accepts; anything unrecognised falls back to partial.
 func resolveAutoMergePolicy(policy string) string {
 	switch policy {
-	case "partial", "enrich", "partial_newest", "newest":
+	case "partial", "enrich", "partial_newest", "newest", "reconcile":
 		return policy
 	default:
 		return "partial"
@@ -1030,6 +1030,24 @@ func (w *ObjectExtractionWorker) autoMergeSimilarityThreshold(ctx context.Contex
 	return resolveAutoMergeThreshold(pol.Merge.SimilarityThreshold)
 }
 
+// autoMergeReconcileMaxPerRun resolves the project's per-run reconciler cap for
+// the auto-merge. 0 means "use the graph preset default" (the graph merge reads
+// a zero cap as the defaultReconcileMaxPerRun).
+func (w *ObjectExtractionWorker) autoMergeReconcileMaxPerRun(ctx context.Context, projectID uuid.UUID) int {
+	if w.projectsRepo == nil {
+		return 0
+	}
+	project, err := w.projectsRepo.GetByID(ctx, projectID.String(), false)
+	if err != nil || project == nil {
+		return 0
+	}
+	pol, err := pipeline.Resolve(project.PipelineMode, project.PipelinePolicy)
+	if err != nil {
+		return 0
+	}
+	return pol.Merge.ReconcileMaxPerRun
+}
+
 // autoMergeExtractionBranch waits for the staging branch to be fully embedded,
 // then performs a partial merge into the main graph: clean additions and
 // fast-forwards are applied, while conflicting/similar objects are left on the
@@ -1056,6 +1074,7 @@ func (w *ObjectExtractionWorker) autoMergeExtractionBranch(ctx context.Context, 
 		Policy:              w.autoMergePolicy(ctx, projectID),
 		WaitForEmbeddings:   true,
 		SimilarityThreshold: w.autoMergeSimilarityThreshold(ctx, projectID),
+		ReconcileMaxPerRun:  w.autoMergeReconcileMaxPerRun(ctx, projectID),
 	}
 	result, err := w.graphService.MergeBranch(ctx, projectID, nil, req)
 	if err != nil {

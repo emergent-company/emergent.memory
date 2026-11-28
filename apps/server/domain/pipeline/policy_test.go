@@ -85,6 +85,31 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestValidateReconcile(t *testing.T) {
+	good := DefaultPolicy(ModeAuto)
+	good.Merge.Policy = "reconcile"
+	if err := Validate(good); err != nil {
+		t.Fatalf("reconcile must be an accepted merge policy: %v", err)
+	}
+
+	bad := good
+	bad.Merge.ReconcileMaxPerRun = -1
+	if err := Validate(bad); err == nil {
+		t.Fatal("expected negative reconcile cap to fail")
+	}
+
+	bad = good
+	bad.Merge.ReconcileMaxPerRun = 1001
+	if err := Validate(bad); err == nil {
+		t.Fatal("expected out-of-range reconcile cap to fail")
+	}
+
+	// The default preset carries the reconcile cap.
+	if suggest := DefaultPolicy(ModeSuggest); suggest.Merge.ReconcileMaxPerRun == 0 {
+		t.Fatal("the default policy must carry a non-zero reconcile cap")
+	}
+}
+
 func TestParseRoundTrip(t *testing.T) {
 	p := DefaultPolicy(ModeAuto)
 	raw := p.Marshal()

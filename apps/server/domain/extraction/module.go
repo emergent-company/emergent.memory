@@ -256,6 +256,7 @@ var Module = fx.Module("extraction",
 		RegisterEmbeddingSweepWorkerLifecycle,
 		RegisterBranchSweepWorkerLifecycle,
 		RegisterGovernorModeWatcherLifecycle,
+		wireConflictReconciler,
 	),
 )
 
@@ -289,6 +290,19 @@ func provideReextractionQueuerForMCP(objJobsSvc *ObjectExtractionJobsService) mc
 // provideDocumentSignalsReaderForMCP exposes documents.Service as mcp.DocumentSignalsReader.
 func provideDocumentSignalsReaderForMCP(docService *documents.Service) mcp.DocumentSignalsReader {
 	return docService
+}
+
+// wireConflictReconciler injects the agents-backed conflict reconciler into the
+// graph service so the "reconcile" merge strategy can COMBINE residual
+// conflicting property values. extraction imports graph (graph never imports
+// extraction), so there is no cycle; fx resolves *graph.Service as part of the
+// same application. Missing dependencies leave the graph reconciler nil, which
+// makes "reconcile" fall back to preserve_target.
+func wireConflictReconciler(graphSvc *graph.Service, modelFactory *adk.ModelFactory, modelCfg *modelconfig.Service, log *slog.Logger) {
+	if graphSvc == nil || modelFactory == nil || modelCfg == nil {
+		return
+	}
+	graphSvc.SetConflictReconciler(NewConflictReconciler(modelFactory, modelCfg, log))
 }
 
 // NewMCPDomainClassifierHandler creates a DomainClassifierHandler for injection into
