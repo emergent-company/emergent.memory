@@ -327,10 +327,11 @@ func isTransientLLMError(err error) bool {
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
-	var netErr net.Error
-	if errors.As(err, &netErr) {
-		return netErr.Timeout()
+	if ne, ok := errors.AsType[net.Error](err); ok && ne.Timeout() {
+		return true
 	}
+	// A non-timeout net error can still be a connection reset/refusal/EPIPE
+	// (surfaced as syscall errors through the net wrapping) — treat as transient.
 	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE) {
 		return true
 	}

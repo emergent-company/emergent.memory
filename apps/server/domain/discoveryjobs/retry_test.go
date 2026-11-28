@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -20,6 +21,8 @@ func TestIsTransientLLMError(t *testing.T) {
 		{"nil", nil, false},
 		{"eof", io.EOF, true},
 		{"wrapped eof", &urlErr{err: io.EOF}, true},
+		{"connection reset", &urlErr{err: syscall.ECONNRESET}, true},
+		{"connection refused", &urlErr{err: syscall.ECONNREFUSED}, true},
 		{"unexpected eof", io.ErrUnexpectedEOF, true},
 		{"deadline exceeded", context.DeadlineExceeded, true},
 		{"cancelled", context.Canceled, false},
