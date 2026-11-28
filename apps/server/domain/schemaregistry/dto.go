@@ -60,6 +60,11 @@ type SchemaRegistryStats struct {
 type ObjectTypeVersionDTO struct {
 	RegistryID    string `bun:"registry_id" json:"registry_id"`
 	SchemaVersion int    `bun:"schema_version" json:"schema_version"`
+	// TypeName is the spelling of the type name stored with this snapshot —
+	// the one in force when the version was written. It can differ from the
+	// live registry row's type_name when a repair carries history across a
+	// rename, so clients can show when the spelling changed (#1236).
+	TypeName string `bun:"type_name" json:"type_name"`
 	// JSONSchema is the snapshot of the registry's json_schema at this version.
 	// The version trigger copies it from kb.project_object_schema_registry, so
 	// it has the same writers as SchemaRegistryEntryDTO.JSONSchema and is an

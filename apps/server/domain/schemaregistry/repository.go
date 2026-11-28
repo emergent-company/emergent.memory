@@ -362,35 +362,25 @@ func (r *Repository) GetTypeByName(ctx context.Context, projectID, typeName stri
 // GetTypeVersionHistory returns the persisted version history for a type.
 // The active snapshot is the one whose schema_version matches the current
 // registry row. History may be empty for types never captured by the trigger.
+//
+// Versions are selected by registry_id — the stable identity of a registered
+// type — not by type_name. A version row keeps the spelling that was in force
+// when it was written, and an operator repair may carry another registry row's
+// history onto this one without rewriting it (#1236). Filtering by type_name
+// would silently drop those carried versions from the history, so instead
+// every version exposes its stored type_name and a client can show when the
+// spelling changed.
 func (r *Repository) GetTypeVersionHistory(ctx context.Context, projectID, typeName string) (*ObjectTypeHistoryResponse, error) {
 	// Reuse GetTypeByName to validate project/type existence and read the
-	// current schema_version.
+	// current registry id and schema_version.
 	current, err := r.GetTypeByName(ctx, projectID, typeName)
 	if err != nil {
 		return nil, err
 	}
 
-	var rows []ObjectTypeVersionDTO
-	_, err = r.db.NewRaw(`
-		SELECT registry_id,
-		       schema_version,
-		       json_schema,
-		       ui_config,
-		       extraction_config,
-		       enabled,
-		       description,
-		       namespace,
-		       created_by,
-		       created_at
-		FROM kb.project_object_schema_registry_versions
-		WHERE project_id = ? AND type_name = ?
-		ORDER BY schema_version DESC
-	`, projectID, typeName).Exec(ctx, &rows)
+	rows, err := r.getTypeVersionRows(ctx, projectID, current.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query type version history: %w", err)
-	}
-	if rows == nil {
-		rows = []ObjectTypeVersionDTO{}
+		return nil, err
 	}
 
 	for i := range rows {
@@ -403,6 +393,36 @@ func (r *Repository) GetTypeVersionHistory(ctx context.Context, projectID, typeN
 		CurrentVersion: current.SchemaVersion,
 		Versions:       rows,
 	}, nil
+}
+
+// getTypeVersionRows reads every persisted version snapshot of one registry
+// row, newest first. The registry_id key is what makes a version written under
+// an earlier spelling of the type name part of the same history.
+func (r *Repository) getTypeVersionRows(ctx context.Context, projectID, registryID string) ([]ObjectTypeVersionDTO, error) {
+	var rows []ObjectTypeVersionDTO
+	_, err := r.db.NewRaw(`
+		SELECT registry_id,
+		       type_name,
+		       schema_version,
+		       json_schema,
+		       ui_config,
+		       extraction_config,
+		       enabled,
+		       description,
+		       namespace,
+		       created_by,
+		       created_at
+		FROM kb.project_object_schema_registry_versions
+		WHERE project_id = ? AND registry_id = ?
+		ORDER BY schema_version DESC
+	`, projectID, registryID).Exec(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query type version history: %w", err)
+	}
+	if rows == nil {
+		rows = []ObjectTypeVersionDTO{}
+	}
+	return rows, nil
 }
 
 // getRelationshipsForType returns the outgoing and incoming relationships for a type

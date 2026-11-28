@@ -52,6 +52,8 @@ curl https://api.example.com/api/schema-registry/projects/<projectId>/types/Pers
 
 Returns the persisted version history for a type, newest first. Each `schema_version` has one snapshot, and `active` is `true` on the version matching the current registry row. Existing types are backfilled at their current version, and a DB trigger keeps the history current automatically. Returns `404` if the type does not exist.
 
+History is keyed by `registry_id`, the registered type's stable identity, not by the requested name. A version keeps the `type_name` that was in force when it was written, so if a repair carries history across a rename the carried versions stay in the result and each one reports its stored spelling.
+
 ```json
 {
   "project_id": "<projectId>",
@@ -61,6 +63,7 @@ Returns the persisted version history for a type, newest first. Each `schema_ver
     {
       "registry_id": "<uuid>",
       "schema_version": 3,
+      "type_name": "Person",
       "json_schema": { "...": "..." },
       "ui_config": { "...": "..." },
       "extraction_config": { "...": "..." },
