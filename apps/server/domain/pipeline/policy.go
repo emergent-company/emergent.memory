@@ -78,11 +78,17 @@ type ExtractPolicy struct {
 type MergePolicy struct {
 	// Policy selects the branch-merge preset: partial (safe default), enrich,
 	// partial_newest (partial plus deterministic newest-wins conflict
-	// resolution), or newest (newest-wins without the similarity probe).
-	Policy               string  `json:"policy"` // partial | enrich | partial_newest | newest
+	// resolution), newest (newest-wins without the similarity probe), or
+	// reconcile (deterministic-first, then an LLM combines only the residual
+	// conflicting fields).
+	Policy               string  `json:"policy"` // partial | enrich | partial_newest | newest | reconcile
 	SimilarityThreshold  float32 `json:"similarity_threshold"`
 	BranchRetentionDays  int     `json:"branch_retention_days"`
 	SweepIntervalMinutes int     `json:"sweep_interval_minutes"`
+	// ReconcileMaxPerRun caps how many reconciler (LLM) calls one merge may make
+	// before subsequent conflicts fall back to preserve_target. Only consulted
+	// under the "reconcile" policy; 0 means "use the default".
+	ReconcileMaxPerRun int `json:"reconcile_max_per_run"`
 }
 
 // BudgetPolicy sets per-day spend ceilings for the automated parts of the
@@ -141,6 +147,7 @@ func suggest() Policy {
 			SimilarityThreshold:  0.92,
 			BranchRetentionDays:  7,
 			SweepIntervalMinutes: 30,
+			ReconcileMaxPerRun:   50,
 		},
 	}
 }
@@ -213,9 +220,9 @@ func Validate(p Policy) error {
 		return fmt.Errorf("extract.backfill_limit_per_run must be within [0,1000]")
 	}
 	switch p.Merge.Policy {
-	case "partial", "enrich", "partial_newest", "newest":
+	case "partial", "enrich", "partial_newest", "newest", "reconcile":
 	default:
-		return fmt.Errorf("merge.policy must be partial, enrich, partial_newest or newest")
+		return fmt.Errorf("merge.policy must be partial, enrich, partial_newest, newest or reconcile")
 	}
 	if p.Merge.SimilarityThreshold < 0 || p.Merge.SimilarityThreshold > 1 {
 		return fmt.Errorf("merge.similarity_threshold must be within [0,1]")
@@ -225,6 +232,9 @@ func Validate(p Policy) error {
 	}
 	if p.Merge.SweepIntervalMinutes < 0 || p.Merge.SweepIntervalMinutes > 1440 {
 		return fmt.Errorf("merge.sweep_interval_minutes must be within [0,1440]")
+	}
+	if p.Merge.ReconcileMaxPerRun < 0 || p.Merge.ReconcileMaxPerRun > 1000 {
+		return fmt.Errorf("merge.reconcile_max_per_run must be within [0,1000]")
 	}
 	if p.Budget.DiscoverySpendCapUSDPerDay < 0 || p.Budget.ExtractionSpendCapUSDPerDay < 0 {
 		return fmt.Errorf("budget caps must be non-negative")
