@@ -1152,3 +1152,169 @@ func TestMergeBranchExactKeyConflictNotRecordedMerged(t *testing.T) {
 	require.NoError(t, db.NewRaw(`SELECT merged_at FROM kb.branches WHERE id = ?`, sourceBranch.ID).Scan(ctx, &mergedAt))
 	require.Nil(t, mergedAt, "an unresolved conflict must keep the branch open")
 }
+
+// TestMergeBranchPartialNewestResolvesSameEntityDrift pins the opt-in
+// same-entity drift policy (#1222). Under the default partial policy a
+// re-extraction of an existing entity whose properties drifted is a conflict
+// preserved on the target, so the branch never closes and its newer values stay
+// invisible. partial_newest resolves that drift in favour of the newer source
+// extraction for non-identity properties, while identity (name) drift and
+// ordinary canonical conflicts are still left for review.
+func TestMergeBranchPartialNewestResolvesSameEntityDrift(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "integration test requires database")
+	}
+	ctx := context.Background()
+
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "graph_partial_newest")
+	t.Cleanup(tdb.Close)
+	db := tdb.GetDB()
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := &config.Config{}
+	cfg.Graph.MaxListLimit = 100_000
+	repo := graph.NewRepository(db, log, cfg)
+	svc := graph.NewService(repo, log, nil, nil, nil, nil, nil, graph.NoopEventSink{}, branches.NewStore(db), nil)
+
+	seedProject := func(t *testing.T, name string) uuid.UUID {
+		t.Helper()
+		orgID := uuid.NewString()
+		require.NoError(t, testutil.CreateTestOrganization(ctx, db, orgID, name+" Org"))
+		projectID := uuid.NewString()
+		require.NoError(t, testutil.CreateTestProject(ctx, db, testutil.TestProject{
+			ID: projectID, OrgID: orgID, Name: name + " Project",
+		}, testutil.AdminUser.ID))
+		return uuid.MustParse(projectID)
+	}
+	branchMergedAt := func(t *testing.T, branchID uuid.UUID) *time.Time {
+		t.Helper()
+		var mergedAt *time.Time
+		require.NoError(t, db.NewRaw(`SELECT merged_at FROM kb.branches WHERE id = ?`, branchID).Scan(ctx, &mergedAt))
+		return mergedAt
+	}
+	mainHead := func(t *testing.T, projectID uuid.UUID, key string) (version int, name, role string) {
+		t.Helper()
+		require.NoError(t, db.NewRaw(`
+			SELECT version, coalesce(name, ''), coalesce(properties->>'role', '')
+			FROM kb.graph_objects
+			WHERE project_id = ? AND type = 'Person' AND key = ? AND branch_id IS NULL AND supersedes_id IS NULL`,
+			projectID, key).Scan(ctx, &version, &name, &role))
+		return version, name, role
+	}
+
+	t.Run("non-identity drift takes the newer value and closes the branch", func(t *testing.T) {
+		pid := seedProject(t, "Partial Newest Drift")
+		name := "Barry Farber"
+
+		_, err := svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+			Type: "Person", Key: strPtr("barry-farber"), Name: &name,
+			Properties: map[string]any{"name": name, "role": "radio host"},
+		}, nil)
+		require.NoError(t, err)
+
+		sourceBranch := &graph.Branch{ID: uuid.New(), ProjectID: pid, Name: "drift-src"}
+		require.NoError(t, repo.CreateBranch(ctx, sourceBranch))
+		src, err := svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+			Type: "Person", Key: strPtr("barry-farber"), Name: &name,
+			BranchID:   &sourceBranch.ID,
+			Properties: map[string]any{"name": name, "role": "author", "born": 1927},
+		}, nil)
+		require.NoError(t, err)
+
+		resp, err := svc.MergeBranch(ctx, pid, nil, &graph.BranchMergeRequest{
+			SourceBranchID: sourceBranch.ID, Execute: true, Policy: "partial_newest",
+		})
+		require.NoError(t, err)
+
+		require.Equal(t, 1, resp.ConflictCount, "the property drift is still classified as a conflict")
+		require.Zero(t, resp.LeftForReviewCount, "non-identity drift must not be left for review")
+		require.NotNil(t, resp.AppliedObjects)
+		require.Equal(t, 1, *resp.AppliedObjects)
+
+		var resolution string
+		for _, o := range resp.Objects {
+			if o.CanonicalID == src.CanonicalID {
+				resolution = o.Resolution
+			}
+		}
+		require.Equal(t, "newest", resolution)
+
+		version, gotName, role := mainHead(t, pid, "barry-farber")
+		require.Equal(t, 2, version, "the drift resolution must write a new main version")
+		require.Equal(t, "Barry Farber", gotName, "the entity title is identity and must not change")
+		require.Equal(t, "author", role, "the newer extraction value must win")
+		require.NotNil(t, branchMergedAt(t, sourceBranch.ID), "a fully resolved drift merge must close the branch")
+
+		// The source row is recorded as collapsed into the main canonical.
+		var mergedTo *uuid.UUID
+		require.NoError(t, db.NewRaw(`
+			SELECT merged_to_canonical_id FROM kb.graph_objects
+			WHERE project_id = ? AND branch_id = ? AND canonical_id = ? AND supersedes_id IS NULL`,
+			pid, sourceBranch.ID, src.CanonicalID).Scan(ctx, &mergedTo))
+		require.NotNil(t, mergedTo)
+	})
+
+	t.Run("identity (name) drift still goes to review", func(t *testing.T) {
+		pid := seedProject(t, "Partial Newest Identity")
+		name := "Barry Farber"
+
+		_, err := svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+			Type: "Person", Key: strPtr("barry-farber"), Name: &name,
+			Properties: map[string]any{"name": name, "role": "radio host"},
+		}, nil)
+		require.NoError(t, err)
+
+		sourceBranch := &graph.Branch{ID: uuid.New(), ProjectID: pid, Name: "identity-src"}
+		require.NoError(t, repo.CreateBranch(ctx, sourceBranch))
+		_, err = svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+			Type: "Person", Key: strPtr("barry-farber"), Name: strPtr("Barry Farber (radio)"),
+			BranchID:   &sourceBranch.ID,
+			Properties: map[string]any{"name": "Barry Farber (radio)", "role": "author"},
+		}, nil)
+		require.NoError(t, err)
+
+		resp, err := svc.MergeBranch(ctx, pid, nil, &graph.BranchMergeRequest{
+			SourceBranchID: sourceBranch.ID, Execute: true, Policy: "partial_newest",
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, resp.LeftForReviewCount, "name drift is identity drift and must be reviewed")
+
+		version, gotName, role := mainHead(t, pid, "barry-farber")
+		require.Equal(t, 1, version, "an identity conflict must not write a version")
+		require.Equal(t, "Barry Farber", gotName)
+		require.Equal(t, "radio host", role)
+		require.Nil(t, branchMergedAt(t, sourceBranch.ID), "an identity conflict must keep the branch open")
+	})
+
+	t.Run("ordinary canonical conflict is still preserved", func(t *testing.T) {
+		pid := seedProject(t, "Partial Newest Canonical")
+		name := "Barry Farber"
+
+		created, err := svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+			Type: "Person", Key: strPtr("barry-farber"), Name: &name,
+			Properties: map[string]any{"name": name, "v": 1},
+		}, nil)
+		require.NoError(t, err)
+		_, err = svc.Patch(ctx, pid, created.ID, &graph.PatchGraphObjectRequest{Properties: map[string]any{"v": 2}}, nil)
+		require.NoError(t, err)
+
+		forkResp, err := svc.ForkBranch(ctx, pid, nil, &graph.ForkBranchRequest{Name: "canonical-branch"})
+		require.NoError(t, err)
+		forkBranchID := uuid.MustParse(forkResp.BranchID)
+		_, err = svc.Patch(ctx, pid, created.ID, &graph.PatchGraphObjectRequest{
+			BranchID: &forkBranchID, Properties: map[string]any{"v": 3},
+		}, nil)
+		require.NoError(t, err)
+
+		resp, err := svc.MergeBranch(ctx, pid, nil, &graph.BranchMergeRequest{
+			SourceBranchID: forkBranchID, Execute: true, Policy: "partial_newest",
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, resp.LeftForReviewCount,
+			"a canonical-id divergence is a real conflict, not re-extraction drift")
+		require.Nil(t, branchMergedAt(t, forkBranchID))
+
+		version, _, _ := mainHead(t, pid, "barry-farber")
+		require.Equal(t, 2, version, "a preserved canonical conflict must not write a version")
+	})
+}

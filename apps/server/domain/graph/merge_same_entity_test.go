@@ -165,3 +165,40 @@ func TestUnionLabels(t *testing.T) {
 	assert.Equal(t, []string{"a", "b"}, unionLabels(nil, []string{"a", "b"}))
 	assert.Empty(t, unionLabels(nil, nil))
 }
+
+// TestSameEntityIdentityProperty pins the identity-protection boundary for the
+// opt-in partial_newest drift resolution (#1222): properties["name"] mirrors the
+// entity's natural identity, so a drift policy must refuse to overwrite it and
+// leave the object for review. Every other property is drift.
+func TestSameEntityIdentityProperty(t *testing.T) {
+	assert.True(t, sameEntityIdentityProperty("/name"))
+	assert.True(t, sameEntityIdentityProperty("name"), "a bare path is accepted too")
+	assert.False(t, sameEntityIdentityProperty("/description"))
+	assert.False(t, sameEntityIdentityProperty("/role"))
+	assert.False(t, sameEntityIdentityProperty("/name_long"), "prefix matches are not identity")
+}
+
+func TestHasSameEntityIdentityConflict(t *testing.T) {
+	assert.True(t, hasSameEntityIdentityConflict([]string{"/role", "/name"}),
+		"one identity path must block auto-resolution of the whole object")
+	assert.False(t, hasSameEntityIdentityConflict([]string{"/role", "/description"}))
+	assert.False(t, hasSameEntityIdentityConflict(nil))
+}
+
+// TestPartialNewestPresetPinsSettings keeps the opt-in drift policy explicit:
+// it is a distinct preset (partial keeps preserve_target), similarity stays
+// suggest-only, and the new canonical-conflict action is "newest".
+func TestPartialNewestPresetPinsSettings(t *testing.T) {
+	got := resolveMergePolicy("partial_newest", "", 0)
+	require.True(t, got.SimilarityEnabled)
+	assert.Equal(t, "suggest", got.SimilarityAction, "similar duplicates still need a reviewer")
+	assert.Equal(t, "newest", got.CanonicalConflictAction)
+	assert.Equal(t, mergePolicyPresets["partial_newest"], got)
+
+	partial := resolveMergePolicy("partial", "", 0)
+	assert.Equal(t, "preserve_target", partial.CanonicalConflictAction,
+		"the default partial policy must keep leaving same-entity drift for review")
+
+	require.NoError(t, validateMergePolicy("partial_newest", ""))
+	assert.Contains(t, MergePolicyNames(), "partial_newest")
+}
