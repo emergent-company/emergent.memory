@@ -140,6 +140,25 @@ type Config struct {
 	// enqueues, so healing a large backlog cannot flood the queue in one tick.
 	// Default: 100.
 	DocumentParsingSweepBatchSize int
+
+	// MergeConvergenceSweepInterval is the interval for the safety-net sweep
+	// that retries merges for unmerged, embedding-ready extraction branches.
+	// Default: 5 minutes.
+	MergeConvergenceSweepInterval time.Duration
+
+	// MergeConvergenceSweepSchedule is the cron schedule override for the merge
+	// convergence sweep. Empty string means use the interval.
+	MergeConvergenceSweepSchedule string
+
+	// MergeConvergenceSweepMinAgeMinutes is how old an unmerged extraction
+	// branch must be before the sweep considers it, so the worker's own
+	// auto-merge and a still-settling embedding run are not raced. Default: 10.
+	MergeConvergenceSweepMinAgeMinutes int
+
+	// MergeConvergenceSweepBatchSize bounds how many branches one sweep run
+	// retries, so healing a large backlog cannot stall the scheduler task.
+	// Default: 50.
+	MergeConvergenceSweepBatchSize int
 }
 
 // NewConfig creates a new Config from environment variables
@@ -184,6 +203,12 @@ func NewConfig() *Config {
 		DocumentParsingSweepSchedule:      getEnvString("DOCUMENT_PARSING_SWEEP_SCHEDULE", ""),
 		DocumentParsingSweepMinAgeMinutes: getEnvInt("DOCUMENT_PARSING_SWEEP_MIN_AGE_MINUTES", 15),
 		DocumentParsingSweepBatchSize:     getEnvInt("DOCUMENT_PARSING_SWEEP_BATCH_SIZE", 100),
+		// Merge convergence sweep: a Go duration string, so it can be set to
+		// "1m" for a quick check without multiplying milliseconds by hand.
+		MergeConvergenceSweepInterval:      getEnvDurationString("MERGE_CONVERGENCE_SWEEP_INTERVAL", 5*time.Minute),
+		MergeConvergenceSweepSchedule:      getEnvString("MERGE_CONVERGENCE_SWEEP_SCHEDULE", ""),
+		MergeConvergenceSweepMinAgeMinutes: getEnvInt("MERGE_CONVERGENCE_SWEEP_MIN_AGE_MINUTES", 10),
+		MergeConvergenceSweepBatchSize:     getEnvInt("MERGE_CONVERGENCE_SWEEP_BATCH_SIZE", 50),
 	}
 }
 
