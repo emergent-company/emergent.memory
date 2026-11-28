@@ -9,8 +9,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -46,6 +50,30 @@ const discoveryMaxOutputTokens int32 = 8192
 const (
 	discoveryDefaultMaxTypes = 20
 	discoveryReducedMaxTypes = 5
+)
+
+// Bounded retry for one LLM call. A transient gateway fault (EOF, timeout,
+// 429/5xx) is worth another attempt, but not indefinitely: after the attempts
+// below are spent the error surfaces and the batch is counted failed. The
+// backoff is small so a healthy run is not delayed, and each whole call is
+// additionally capped by discoveryLLMCallTimeout so a hung gateway cannot pin a
+// worker slot.
+const (
+	// discoveryLLMMaxAttempts is the total number of tries one LLM call gets
+	// (the first attempt plus two retries).
+	discoveryLLMMaxAttempts = 3
+	// discoveryLLMRetryBase is the first backoff before a retry; it doubles per
+	// attempt (500ms, 1s, …) and is capped at discoveryLLMRetryMax.
+	discoveryLLMRetryBase = 500 * time.Millisecond
+	// discoveryLLMRetryMax is the longest backoff one retry accepts.
+	discoveryLLMRetryMax = 2 * time.Second
+	// discoveryLLMCallTimeout bounds one LLM call (the whole retry sequence) so
+	// a hung gateway cannot block a run indefinitely.
+	discoveryLLMCallTimeout = 90 * time.Second
+	// discoveryEmptyMaxAttempts is how many times a batch that returned no types
+	// at all is re-asked before the empty answer is accepted (a model blip, not
+	// a failure).
+	discoveryEmptyMaxAttempts = 3
 )
 
 // DefaultDiscoveryMaxDocuments bounds a project-wide discovery run. Each
@@ -99,6 +127,9 @@ type Service struct {
 	// new start supersedes it. Zero disables takeover (every active job holds
 	// its claim); the module wires DefaultStaleJobAfter.
 	staleAfter time.Duration
+	// llmRetryBackoff overrides the default retry backoff schedule (nil uses the
+	// built-in 500ms/1s/2s). Tests set it to zero delays to avoid sleeping.
+	llmRetryBackoff []time.Duration
 	// policyReader enables auto-apply at completion; nil keeps the manual-only
 	// finalize path (see SetPipelinePolicyReader).
 	policyReader PipelinePolicyReader
@@ -133,12 +164,20 @@ func (s *Service) documentCap() int {
 
 // completeWithLLM sends a text prompt and returns the text response.
 // Uses the configured modelFactory to create a model per call.
+//
+// The call is bounded by a per-call timeout and retried on transient failures
+// (network EOF, timeouts, 429/5xx). A permanent failure — a missing provider, a
+// bad credential, an invalid request — fails fast, and a truncated response is
+// surfaced unchanged so the caller can shrink the request instead of re-asking
+// for the same answer.
 func (s *Service) completeWithLLM(ctx context.Context, prompt string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, discoveryLLMCallTimeout)
+	defer cancel()
+
 	ctx, span := tracing.Start(ctx, "discovery.llm_complete",
 		attribute.Int("memory.discovery.prompt_length", len(prompt)),
 	)
 	defer span.End()
-	_ = ctx // ctx carries the span for any downstream instrumentation
 
 	if s.modelFactory == nil {
 		span.SetAttributes(attribute.String("error", "modelFactory is nil"))
@@ -159,27 +198,43 @@ func (s *Service) completeWithLLM(ctx context.Context, prompt string) (string, e
 			ResponseMIMEType: "application/json",
 		},
 	}
-	var sb strings.Builder
-	truncated := false
-	for resp, err := range llmModel.GenerateContent(ctx, req, false) {
-		if err != nil {
-			span.SetAttributes(attribute.String("error", err.Error()))
-			return "", fmt.Errorf("LLM call failed: %w", err)
-		}
-		if resp != nil {
-			if resp.FinishReason == genai.FinishReasonMaxTokens {
-				truncated = true
-			}
-			if resp.Content != nil {
-				for _, part := range resp.Content.Parts {
-					if part.Text != "" {
-						sb.WriteString(part.Text)
-					}
-				}
+
+	var (
+		result    string
+		truncated bool
+		lastErr   error
+	)
+	for attempt := 0; attempt < discoveryLLMMaxAttempts; attempt++ {
+		if attempt > 0 {
+			if !sleepWithContext(ctx, s.llmBackoffFor(attempt)) {
+				lastErr = fmt.Errorf("LLM call cancelled during retry backoff: %w", ctx.Err())
+				break
 			}
 		}
+
+		result, truncated, lastErr = s.generateContentOnce(ctx, llmModel, req)
+		if lastErr == nil || errors.Is(lastErr, ErrOutputTruncated) || !isTransientLLMError(lastErr) {
+			break
+		}
+		s.log.Warn("transient LLM failure; retrying",
+			slog.Int("attempt", attempt+1),
+			slog.Int("max_attempts", discoveryLLMMaxAttempts),
+			logger.Error(lastErr))
 	}
-	result := sb.String()
+
+	if lastErr != nil && !errors.Is(lastErr, ErrOutputTruncated) {
+		// A transient error here means every attempt failed: say so, so the
+		// batch-level log and the job error name the exhaustion, not just the
+		// last gateway fault.
+		if isTransientLLMError(lastErr) {
+			lastErr = fmt.Errorf("LLM call failed after %d attempts: %w", discoveryLLMMaxAttempts, lastErr)
+		}
+		span.SetAttributes(attribute.String("error", lastErr.Error()))
+		span.RecordError(lastErr)
+		span.SetStatus(codes.Error, lastErr.Error())
+		return "", lastErr
+	}
+
 	span.SetAttributes(attribute.Int("memory.discovery.response_length", len(result)))
 	span.SetAttributes(attribute.Bool("memory.discovery.output_truncated", truncated))
 	preview := result
@@ -200,6 +255,131 @@ func (s *Service) completeWithLLM(ctx context.Context, prompt string) (string, e
 		return result, fmt.Errorf("%w (max_output_tokens=%d)", ErrOutputTruncated, discoveryMaxOutputTokens)
 	}
 	return result, nil
+}
+
+// generateContentOnce performs a single GenerateContent call and assembles the
+// text from every returned part. It reports whether the response was cut off at
+// the model's output limit so the caller can shrink the request rather than
+// treat truncation as a transient fault.
+func (s *Service) generateContentOnce(ctx context.Context, llmModel model.LLM, req *model.LLMRequest) (string, bool, error) {
+	var sb strings.Builder
+	truncated := false
+	for resp, err := range llmModel.GenerateContent(ctx, req, false) {
+		if err != nil {
+			return sb.String(), truncated, fmt.Errorf("LLM call failed: %w", err)
+		}
+		if resp != nil {
+			if resp.FinishReason == genai.FinishReasonMaxTokens {
+				truncated = true
+			}
+			if resp.Content != nil {
+				for _, part := range resp.Content.Parts {
+					if part.Text != "" {
+						sb.WriteString(part.Text)
+					}
+				}
+			}
+		}
+	}
+	return sb.String(), truncated, nil
+}
+
+// llmBackoffFor returns how long to wait before the given 1-based retry attempt.
+// The default schedule is 500ms, then 1s, then 2s (capped); an injected schedule
+// (used by tests) wins.
+func (s *Service) llmBackoffFor(attempt int) time.Duration {
+	if s.llmRetryBackoff != nil {
+		if attempt-1 < len(s.llmRetryBackoff) {
+			return s.llmRetryBackoff[attempt-1]
+		}
+		return s.llmRetryBackoff[len(s.llmRetryBackoff)-1]
+	}
+	d := discoveryLLMRetryBase << (attempt - 1)
+	if d > discoveryLLMRetryMax {
+		return discoveryLLMRetryMax
+	}
+	return d
+}
+
+// isTransientLLMError reports whether an error from the model layer is worth
+// retrying. Network faults (EOF, connection reset), timeouts, deadline
+// exhaustion and provider 429/5xx are transient; a cancelled context, output
+// truncation, and a status the request itself caused (auth 401/403, invalid
+// 400/404/422) are not. Ambiguous errors default to transient — but always
+// bounded by discoveryLLMMaxAttempts, so a misclassified permanent error can
+// only cost a small, finite backoff.
+func isTransientLLMError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// A cancelled context is a caller decision, not a fault to retry.
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	// Truncation is not a transient fault: the caller shrinks the request rather
+	// than re-asking for the same answer.
+	if errors.Is(err, ErrOutputTruncated) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout()
+	}
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	// Provider status codes surface as strings ("endpoint returned NNN",
+	// "API error NNN"). 429 and 5xx are transient; a 4xx is not.
+	if code, ok := providerStatusFromError(err); ok {
+		return code == http.StatusTooManyRequests || code >= 500
+	}
+	return true
+}
+
+// providerStatusFromError extracts an HTTP status code from a provider error
+// message of the form "...returned NNN..." or "...API error NNN...".
+func providerStatusFromError(err error) (int, bool) {
+	msg := err.Error()
+	for _, marker := range []string{"returned ", "API error ", "status "} {
+		i := strings.Index(msg, marker)
+		if i < 0 {
+			continue
+		}
+		rest := msg[i+len(marker):]
+		n := 0
+		for n < 3 && n < len(rest) && rest[n] >= '0' && rest[n] <= '9' {
+			n++
+		}
+		if n == 0 {
+			continue
+		}
+		if code, convErr := strconv.Atoi(rest[:n]); convErr == nil {
+			return code, true
+		}
+	}
+	return 0, false
+}
+
+// sleepWithContext waits for d and reports whether the wait completed. A
+// cancelled context ends it early so a shutdown is never delayed by a backoff.
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 // StartDiscovery starts a new discovery job.
@@ -1552,6 +1732,18 @@ func (s *Service) discoverBatchTypes(ctx context.Context, docs []DocumentContent
 		return nil, fmt.Errorf("LLM call failed: %w", callErr)
 	}
 
+	// A model blip can answer nothing at all for a batch that does contain
+	// entities. Re-ask the same prompt a couple of times before accepting zero
+	// types, so a transient empty answer neither spuriously splits the batch
+	// nor fails the run outright (a legitimately entity-free batch is still a
+	// valid, empty result).
+	if s.isEmptyDiscoveryResult(response, callErr) {
+		response, callErr = s.retryEmptyDiscovery(ctx, prompt, response, callErr)
+		if callErr != nil && !errors.Is(callErr, ErrOutputTruncated) {
+			return nil, fmt.Errorf("LLM call failed: %w", callErr)
+		}
+	}
+
 	// Decide what to do with the batch: store, split, retry with fewer types, or
 	// fail. A complete response that found no types is not a failure; a
 	// truncated one is.
@@ -1599,6 +1791,45 @@ func (s *Service) discoverBatchTypes(ctx context.Context, docs []DocumentContent
 		slog.Int("type_count", len(types)))
 
 	return []discoveredGroup{{Types: types, DocumentIDs: documentIDs(docs)}}, nil
+}
+
+// isEmptyDiscoveryResult reports whether a non-erroring call produced no usable
+// types at all — either an empty body or a complete answer that found none. It
+// is the "model blip" the empty-retry path re-asks, distinct from a truncated
+// answer (which carries its own shrink-the-request retry).
+func (s *Service) isEmptyDiscoveryResult(response string, callErr error) bool {
+	if callErr != nil && !errors.Is(callErr, ErrOutputTruncated) {
+		return false
+	}
+	if strings.TrimSpace(response) == "" {
+		return true
+	}
+	types, _, parseErr := s.parseTypeDiscoveryResponse(response)
+	return parseErr == nil && len(types) == 0
+}
+
+// retryEmptyDiscovery re-asks a prompt that came back with no types at all, up
+// to discoveryEmptyMaxAttempts total attempts, before returning the last (still
+// empty) answer. A batch that legitimately holds no entities is then accepted
+// as zero types rather than failed.
+func (s *Service) retryEmptyDiscovery(ctx context.Context, prompt, response string, callErr error) (string, error) {
+	for attempt := 1; attempt < discoveryEmptyMaxAttempts; attempt++ {
+		if !sleepWithContext(ctx, s.llmBackoffFor(attempt)) {
+			return response, callErr
+		}
+		retryResp, retryErr := s.completeWithLLM(ctx, prompt)
+		if retryErr != nil && !errors.Is(retryErr, ErrOutputTruncated) {
+			return retryResp, retryErr
+		}
+		if !s.isEmptyDiscoveryResult(retryResp, retryErr) {
+			return retryResp, retryErr
+		}
+		s.log.Warn("discovery returned no types; retrying the batch",
+			slog.Int("attempt", attempt+1),
+			slog.Int("max_attempts", discoveryEmptyMaxAttempts))
+		response, callErr = retryResp, retryErr
+	}
+	return response, callErr
 }
 
 // effectiveTypeBudget resolves a prompt type budget (0 = default).
