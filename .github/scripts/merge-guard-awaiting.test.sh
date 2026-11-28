@@ -23,9 +23,10 @@
 #
 # `bash -n` and a YAML parse catch none of that, so this suite extracts BOTH
 # `run:` blocks from the workflow at run time, replaces `gh` with a stub on
-# PATH, and drives the eight cases (no marker / stale marker / approval on each
-# trigger, rejection on both), asserting the step exit status, the step outputs
-# and the published check conclusion.
+# PATH, and drives the cases below (no marker / stale marker / approval on each
+# trigger, rejection on both, the bot identity in both directions, #1325, and a
+# bare bot rejection after a human approval, #1219), asserting the step exit
+# status, the step outputs and the published check conclusion.
 #
 # The workflow lives in THIS repo, next to the harness: it is resolved relative
 # to the repository root, and a missing file is a hard failure -- there is no
@@ -429,6 +430,62 @@ fixture "$tmp/stale.json" "$(printf 'Reviewed-SHA: %s\nVerdict: MERGE' "$STALE")
 fixture "$tmp/approval.json" "$(printf 'Reviewed-SHA: %s\nVerdict: MERGE' "$HEAD")"
 fixture "$tmp/rejection.json" "$(printf 'Reviewed-SHA: %s\nVerdict: CHANGES_REQUESTED' "$HEAD")"
 
+# A comment list with an explicit author, for the identity cases below. `fixture`
+# pins the trusted-OWNER identity; these need a bot's.
+fixture_as() { # <file> <author json> <body...>
+  local file=$1 author=$2 arr='[]' body
+  shift 2
+  for body in "$@"; do
+    arr=$(jq -c --argjson a "$author" --arg now "$NOW" \
+      --arg url "https://github.com/$REPO/pull/$PR#issuecomment-1" --arg b "$body" \
+      '. + [{user: $a.user, author_association: $a.author_association,
+             created_at: $now, html_url: $url, body: $b}]' <<<"$arr")
+  done
+  printf '%s' "$arr" >"$file"
+}
+
+# The two bot signals separate (#1325): the documented enum, and an App's `[bot]`
+# login on a payload with no `type` at all. The second is the one this copy used
+# to trust -- `.user.type != "Bot"` is true when the field is absent -- so it is
+# the regression case, and it is OWNER to show the association cannot rescue it.
+BOT_TYPE='{"user":{"id":4242,"login":"some-app[bot]","type":"Bot"},"author_association":"OWNER"}'
+BOT_LOGIN='{"user":{"id":4242,"login":"some-app[bot]"},"author_association":"OWNER"}'
+
+fixture_as "$tmp/bot-type-approval.json" "$BOT_TYPE" \
+  "$(printf 'Reviewed-SHA: %s\nVerdict: MERGE' "$HEAD")"
+fixture_as "$tmp/bot-login-approval.json" "$BOT_LOGIN" \
+  "$(printf 'Reviewed-SHA: %s\nVerdict: MERGE' "$HEAD")"
+fixture_as "$tmp/bot-login-rejection.json" "$BOT_LOGIN" \
+  "$(printf 'Reviewed-SHA: %s\nVerdict: CHANGES_REQUESTED' "$HEAD")"
+
+# A bot marker and a human marker on the same head: the bot is skipped, so the
+# human still decides. Same head on both, the human later.
+jq -c -n --arg now "$NOW" --arg later "2026-11-06T10:00:05Z" --arg h "$HEAD" \
+  --arg url "https://github.com/$REPO/pull/$PR#issuecomment-1" '[
+    {user: {id: 4242, login: "some-app[bot]"}, author_association: "OWNER",
+     created_at: $now, html_url: $url,
+     body: ("Reviewed-SHA: " + $h + "\nVerdict: MERGE")},
+    {user: {id: 4037961, login: "a-person", type: "User"}, author_association: "OWNER",
+     created_at: $later, html_url: $url,
+     body: ("Reviewed-SHA: " + $h + "\nVerdict: MERGE")}
+  ]' >"$tmp/bot-then-human.json"
+
+# A trusted human approval and a *bare* bot rejection after it (#1219). The bot
+# names no head, so it can only be seen by `BLOCKER_JQ`; it carries no
+# `user.type` at all, so `[bot]` is the only signal that marks it as a bot. On
+# the old `.user.type != "Bot"` clause this blocked a human-approved PR -- the
+# clause was true when the field was absent -- while the suite still passed,
+# because no fixture reached `BLOCKER_JQ` with a bot author.
+jq -c -n --arg now "$NOW" --arg later "2026-11-06T10:00:05Z" --arg h "$HEAD" \
+  --arg url "https://github.com/$REPO/pull/$PR#issuecomment-1" '[
+    {user: {id: 4037961, login: "a-person", type: "User"}, author_association: "OWNER",
+     created_at: $now, html_url: $url,
+     body: ("Reviewed-SHA: " + $h + "\nVerdict: MERGE")},
+    {user: {id: 4242, login: "some-app[bot]"}, author_association: "OWNER",
+     created_at: $later, html_url: $url,
+     body: "Verdict: CHANGES_REQUESTED"}
+  ]' >"$tmp/human-then-bot-rejection.json"
+
 # --- one case ----------------------------------------------------------------
 step1_status=0
 step2_status=0
@@ -522,7 +579,7 @@ run_case() { # <label> <fixture> <mode> <want-step1> <want-awaiting:true|false> 
   fi
 }
 
-# The eight cases: a push is an automatic evaluation (published check run
+# The cases: a push is an automatic evaluation (published check run
 # neutral, but the job exits non-zero -- nothing can be enforced yet), a dispatch
 # is the binding one (red -- nothing merges unreviewed), and a rejection is red
 # on both.
@@ -544,6 +601,24 @@ run_case "push, rejection" "$tmp/rejection.json" pull_request_target \
   1 false failure "merge-guard: failure" 1
 run_case "dispatch, rejection" "$tmp/rejection.json" workflow_dispatch \
   1 false failure "merge-guard: failure" 1
+
+# A bot is advisory in both directions (#1290, #1310), decided by two signals
+# (#1325). A bot approval is not a marker -- on a push that is "awaiting review",
+# on a dispatch it is red -- and a bot rejection cannot hold a human-approved PR.
+run_case "push, bot approval typed Bot" "$tmp/bot-type-approval.json" pull_request_target \
+  0 true neutral "merge-guard: awaiting review" 1
+run_case "dispatch, bot approval with no user.type" "$tmp/bot-login-approval.json" workflow_dispatch \
+  1 false failure "merge-guard: failure" 1
+run_case "push, bot rejection with no user.type" "$tmp/bot-login-rejection.json" pull_request_target \
+  0 true neutral "merge-guard: awaiting review" 1
+# ...and a bare bot rejection after a human approval must not reach BLOCKER_JQ
+# (#1219): the approval stands, which is the branch the fixture above cannot
+# exercise because it has no marker to protect.
+run_case "push, human approval then bare bot rejection" "$tmp/human-then-bot-rejection.json" pull_request_target \
+  0 false success "merge-guard: pass" 0
+# ...and a human marker on the same head is still the one that counts.
+run_case "push, bot then human approval" "$tmp/bot-then-human.json" pull_request_target \
+  0 false success "merge-guard: pass" 0
 
 if ((fail)); then
   echo "merge-guard-awaiting: FAILED" >&2
