@@ -81,7 +81,12 @@ fi
 # is ignored by `github-review-gate.yml` (#1385). That logic used to live in a
 # `run:` block no test could reach, and the author filter in it was inverted for
 # rejections -- product #1036 merged 2m12s after a trusted `CHANGES_REQUESTED`.
-for suite in reconcile-release-tag.test.sh dispatch-release-tag.test.sh review-gate.test.sh; do
+# `check-secret-environments.test.sh` is the last suite: the guard and its
+# shrinking baseline land here, not in a workflow step, because the required
+# `ci` job runs this file and the lane token cannot push .github/workflows/**
+# (no `workflows` permission). It exercises the scanner, the baseline's stale
+# and wrong-environment rules, and the guard's wiring below (#1232).
+for suite in reconcile-release-tag.test.sh dispatch-release-tag.test.sh review-gate.test.sh check-secret-environments.test.sh; do
   echo "==> .github/scripts/$suite"
   if bash "$root/.github/scripts/$suite"; then
     echo "==> .github/scripts/$suite PASSED"
@@ -90,6 +95,28 @@ for suite in reconcile-release-tag.test.sh dispatch-release-tag.test.sh review-g
     status=1
   fi
 done
+
+# Signing and App credentials live in the `signing` / `dev-dispatch`
+# environments instead of repo-level secrets (#1232): a repository secret is
+# readable by any workflow run a pushed branch can add (`on: pull_request` +
+# `run: … ${{ secrets.X }}`) with no approval, while an environment secret
+# requires the job to declare the environment and the environment's deployment
+# branch policy refuses agent-pushed refs. This guard keeps the tree half -- a
+# job that reads one of those secrets must declare the environment that owns it
+# -- and its baseline (check-secret-environments.baseline) is the shrinking list
+# of the four jobs whose `environment:` line still needs `workflows: write` to
+# land. It runs here because this file is what the required `ci` job executes,
+# so the guard needs no workflow-file change (the route fetch-hygiene.sh takes
+# for the same permission gap). A finding fails; a stale baseline entry fails
+# too, so the list can only shrink.
+echo "==> .github/scripts/check-secret-environments.py"
+if python3 "$root/.github/scripts/check-secret-environments.py" --self-test \
+   && python3 "$root/.github/scripts/check-secret-environments.py"; then
+  echo "==> .github/scripts/check-secret-environments.py PASSED"
+else
+  echo "==> .github/scripts/check-secret-environments.py FAILED"
+  status=1
+fi
 
 # The connector dev channel must not resolve a tag named like a branch (#956).
 # install.test.sh stubs curl/tar, so it runs offline.
@@ -106,4 +133,4 @@ if [ "$status" -ne 0 ]; then
   exit 1
 fi
 
-echo "preflight: OK (base, base-check tests, version-drift tests, migration numbering, cross-branch Go declaration collisions, gofmt, CLI skill pin, stale docs, Astro docs port, skip census, mcp authz, modelref split, runrole guard, schemadrift, gitleaks waivers, gitleaks env files, connector lint self-test, ui guardrails, brand gate tests, brand tokens, gh-pages budget self-tests, server architectural-debt ratchet, connector install channel, release tag reconcile/dispatch, release tag drift, fetch hygiene)"
+echo "preflight: OK (base, base-check tests, version-drift tests, migration numbering, cross-branch Go declaration collisions, gofmt, CLI skill pin, stale docs, Astro docs port, skip census, mcp authz, modelref split, runrole guard, schemadrift, gitleaks waivers, gitleaks env files, connector lint self-test, ui guardrails, brand gate tests, brand tokens, gh-pages budget self-tests, server architectural-debt ratchet, connector install channel, release tag reconcile/dispatch, release tag drift, fetch hygiene, secret environments)"
