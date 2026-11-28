@@ -124,6 +124,8 @@ func (r *conflictReconciler) Reconcile(ctx context.Context, req graph.ConflictRe
 func (r *conflictReconciler) cacheKey(req graph.ConflictReconcileRequest) string {
 	h := sha256.New()
 
+	h.Write([]byte(req.ProjectID.String()))
+	h.Write([]byte{0})
 	h.Write([]byte(req.TypeName))
 	h.Write([]byte{0})
 

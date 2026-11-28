@@ -5879,6 +5879,9 @@ func (s *Service) applyMerge(
 					summary.Resolution = "skipped"
 					continue
 				}
+				// Count the attempt (success OR failure) toward the per-run cap so
+				// repeated errored responses cannot exceed the documented spend bound.
+				reconcileCalls++
 				reconciled, model, err := s.reconcileResidual(ctx, projectID, prevHead.Type, src.Properties, prevHead.Properties, residual)
 				if err != nil {
 					s.log.Warn("reconcile: reconciler failed, leaving for review",
@@ -5889,7 +5892,6 @@ func (s *Service) applyMerge(
 					summary.Resolution = "skipped"
 					continue
 				}
-				reconcileCalls++
 				for key, v := range reconciled {
 					base[key] = v
 				}
