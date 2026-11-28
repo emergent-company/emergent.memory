@@ -86,8 +86,8 @@ type MergePolicy struct {
 	BranchRetentionDays  int     `json:"branch_retention_days"`
 	SweepIntervalMinutes int     `json:"sweep_interval_minutes"`
 	// ReconcileMaxPerRun caps how many reconciler (LLM) calls one merge may make
-	// before subsequent conflicts fall back to preserve_target. Only consulted
-	// under the "reconcile" policy; 0 means "use the default".
+	// before subsequent conflicts fall back to deterministic newest-wins. Only
+	// consulted under the "reconcile" policy; 0 means "use the default".
 	ReconcileMaxPerRun int `json:"reconcile_max_per_run"`
 }
 
@@ -156,6 +156,11 @@ func auto() Policy {
 	p := suggest()
 	p.Mode = ModeAuto
 	p.Extract.ReExtractOnSchemaChange = ReExtractIncremental
+	// Auto mode converges by default: residual conflicts are reconciled via the
+	// wired LLM reconciler (with a deterministic newest-wins fallback), so
+	// re-extraction output eventually merges without a human in the loop.
+	p.Merge.Policy = "reconcile"
+	p.Merge.ReconcileMaxPerRun = 50
 	return p
 }
 

@@ -27,6 +27,12 @@ func TestDefaultPolicyByMode(t *testing.T) {
 	if !auto.Apply.AdditiveOnly {
 		t.Fatal("auto must be additive-only")
 	}
+	if auto.Merge.Policy != "reconcile" {
+		t.Fatalf("auto merge policy = %q, want reconcile", auto.Merge.Policy)
+	}
+	if auto.Merge.ReconcileMaxPerRun != 50 {
+		t.Fatalf("auto reconcile cap = %d, want 50", auto.Merge.ReconcileMaxPerRun)
+	}
 
 	if got := DefaultPolicy(ModeOff).Mode; got != ModeOff {
 		t.Fatalf("off mode = %q", got)

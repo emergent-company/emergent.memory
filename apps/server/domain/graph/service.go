@@ -107,8 +107,8 @@ type Service struct {
 	branchNotificationResolver BranchNotificationResolver
 
 	// conflictReconciler resolves residual conflicting property values under the
-	// "reconcile" merge strategy. Nil keeps the preserve_target fallback (see
-	// SetConflictReconciler).
+	// "reconcile" merge strategy. Nil makes a residual conflict fall back to
+	// deterministic newest-wins instead (see SetConflictReconciler).
 	conflictReconciler ConflictReconciler
 
 	// bulkUpdateMaxItems caps the number of items accepted by a bulk-update
@@ -264,8 +264,8 @@ func (s *Service) WithBranchNotificationResolver(resolver BranchNotificationReso
 }
 
 // SetConflictReconciler injects the "reconcile" conflict resolver. Nil-safe:
-// without it, a "reconcile" merge leaves conflicting objects for review
-// (preserve_target) instead of asking an LLM to combine them.
+// without it, a "reconcile" merge falls back to deterministic newest-wins for
+// residual conflicts instead of asking an LLM to combine them.
 func (s *Service) SetConflictReconciler(r ConflictReconciler) {
 	s.conflictReconciler = r
 }
@@ -5350,10 +5350,12 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 				skippedCount++
 				leftForReview++
 			case "reconcile":
-				// Mirror applyMerge: a conflict with no residual (after case/
-				// whitespace normalisation) reconciles deterministically; a
-				// genuine residual needs a wired reconciler to resolve, else it
-				// is left for review.
+				// Mirror applyMerge exactly: a conflict with no residual (after
+				// case/whitespace normalisation) reconciles deterministically; a
+				// genuine residual resolves via the wired reconciler, else falls
+				// back to deterministic newest-wins. Only a residual conflict
+				// with undeterminable recency and no successful reconciler is
+				// left for review.
 				src := sourceObjects[sum.CanonicalID]
 				var tgt *BranchObjectHead
 				if sum.SameEntityTargetID != nil {
@@ -5361,11 +5363,28 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 				} else {
 					tgt = targetObjects[sum.CanonicalID]
 				}
-				if src != nil && tgt != nil &&
-					(len(findConflictingPaths(src.Properties, tgt.Properties)) == 0 || s.conflictReconciler != nil) {
+				if src == nil || tgt == nil {
+					sum.Resolution = "skipped"
+					skippedCount++
+					leftForReview++
+					break
+				}
+				residual := findConflictingPaths(src.Properties, tgt.Properties)
+				switch {
+				case len(residual) == 0:
 					sum.Resolution = "reconciled"
 					resolvedCount++
-				} else {
+				case s.compareRecency(ctx, src.Properties, tgt.Properties, src.ExtractionJobID, tgt.ExtractionJobID) != 0:
+					// Deterministic newest-wins fallback guarantees resolution,
+					// even if the reconciler is absent or later fails.
+					sum.Resolution = "reconcile_fallback_newest"
+					resolvedCount++
+				case s.conflictReconciler != nil:
+					// Only a wired reconciler can save an undeterminable-recency
+					// residual; optimistic — corrected by applyMerge on error/cap.
+					sum.Resolution = "reconciled"
+					resolvedCount++
+				default:
 					sum.Resolution = "skipped"
 					skippedCount++
 					leftForReview++
@@ -5564,8 +5583,9 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 // into existing target entities per the similarity action in settings.
 // Returns the total number of objects+relationships written. When reconcileLeft
 // is non-nil, it is set to the number of "reconcile" conflicts that fell back
-// to preserve_target but were NOT already counted as left-for-review by the
-// pre-compute pass (i.e. a wired reconciler errored or hit the per-run cap), so
+// all the way to preserve_target (a residual conflict with undeterminable
+// recency after the reconciler was unavailable, errored or hit the per-run cap)
+// but were NOT already counted as left-for-review by the pre-compute pass, so
 // the caller can correct the left-for-review accounting.
 func (s *Service) applyMerge(
 	ctx context.Context,
@@ -5603,7 +5623,8 @@ func (s *Service) applyMerge(
 
 	// Reconcile bookkeeping: the per-run cap on ConflictReconciler calls, and the
 	// running count of calls made this merge. Conflicts past the cap fall back to
-	// preserve_target.
+	// deterministic newest-wins (latest extraction survives) rather than being
+	// parked for review.
 	reconcileCap := settings.ReconcileMaxPerRun
 	if reconcileCap <= 0 {
 		reconcileCap = defaultReconcileMaxPerRun
@@ -5868,40 +5889,66 @@ func (s *Service) applyMerge(
 					mergeResolution = "reconciled"
 					break
 				}
-				if s.conflictReconciler == nil {
-					// No reconciler wired — the pre-compute pass already counted
-					// this as left-for-review, so it needs no correction here.
-					continue
+
+				// A missing/failed reconciler or an exhausted per-run cap must not
+				// strand the data: fall back to deterministic newest-wins (latest
+				// extraction survives), so the branch still converges. Only when
+				// recency is itself undeterminable (a tie or no timestamps) does
+				// the object stay on the target for review.
+				var useNewestFallback bool
+				if s.conflictReconciler != nil && reconcileCalls < reconcileCap {
+					// Count the attempt (success OR failure) toward the per-run
+					// cap so repeated errored responses cannot exceed the
+					// documented spend bound.
+					reconcileCalls++
+					reconciled, model, err := s.reconcileResidual(ctx, projectID, prevHead.Type, src.Properties, prevHead.Properties, residual)
+					if err != nil {
+						s.log.Warn("reconcile: reconciler failed, falling back to newest",
+							slog.String("canonical_id", cid.String()),
+							slog.String("type", prevHead.Type),
+							logger.Error(err))
+						useNewestFallback = true
+					} else {
+						for key, v := range reconciled {
+							base[key] = v
+						}
+						mergedProps = base
+						mergeResolution = "reconciled"
+						reconcileModel = model
+						for _, path := range residual {
+							reconcileKeys = append(reconcileKeys, strings.TrimPrefix(path, "/"))
+						}
+						sort.Strings(reconcileKeys)
+					}
+				} else {
+					useNewestFallback = true
 				}
-				if reconcileCalls >= reconcileCap {
-					// Per-run cap exhausted — preserve target (leave for review).
-					reconcileLeftCount++
-					summary.Resolution = "skipped"
-					continue
+
+				if useNewestFallback {
+					// Deterministic newest-wins, mirroring the "newest" strategy:
+					// source-newer wins (like overwrite), target-newer wins (like
+					// enrich). A tie is the last resort: preserve_target.
+					switch s.compareRecency(ctx, src.Properties, prevHead.Properties, src.ExtractionJobID, prevHead.ExtractionJobID) {
+					case -1: // source newer — source wins, like overwrite
+						mergedProps = mergeProps(prevHead.Properties, src.Properties)
+						mergeResolution = "reconcile_fallback_newest"
+						sourceWins = true
+						summary.Resolution = "reconcile_fallback_newest"
+					case 1: // target newer — target wins, like enrich
+						mergedProps = mergeProps(src.Properties, prevHead.Properties)
+						mergeResolution = "reconcile_fallback_newest"
+						summary.Resolution = "reconcile_fallback_newest"
+					default: // tie / undeterminable — preserve_target (last resort)
+						// Only a wired reconciler would have been optimistically
+						// counted as resolved by the pre-compute pass; without one
+						// the pre-compute already counted this as left-for-review.
+						if s.conflictReconciler != nil {
+							reconcileLeftCount++
+						}
+						summary.Resolution = "skipped"
+						continue
+					}
 				}
-				// Count the attempt (success OR failure) toward the per-run cap so
-				// repeated errored responses cannot exceed the documented spend bound.
-				reconcileCalls++
-				reconciled, model, err := s.reconcileResidual(ctx, projectID, prevHead.Type, src.Properties, prevHead.Properties, residual)
-				if err != nil {
-					s.log.Warn("reconcile: reconciler failed, leaving for review",
-						slog.String("canonical_id", cid.String()),
-						slog.String("type", prevHead.Type),
-						logger.Error(err))
-					reconcileLeftCount++
-					summary.Resolution = "skipped"
-					continue
-				}
-				for key, v := range reconciled {
-					base[key] = v
-				}
-				mergedProps = base
-				mergeResolution = "reconciled"
-				reconcileModel = model
-				for _, path := range residual {
-					reconcileKeys = append(reconcileKeys, strings.TrimPrefix(path, "/"))
-				}
-				sort.Strings(reconcileKeys)
 			default: // "enrich"
 				// Target wins same keys; source adds new keys only.
 				mergedProps = mergeProps(src.Properties, prevHead.Properties)
@@ -6347,8 +6394,9 @@ type mergeSettings struct {
 	// ConflictReconciler to COMBINE only the residual conflicting values.
 	CanonicalConflictAction string
 	// ReconcileMaxPerRun caps how many ConflictReconciler calls a single merge
-	// may make before subsequent conflicts fall back to preserve_target. Only
-	// consulted under the "reconcile" action; zero uses the default.
+	// may make before subsequent conflicts fall back to deterministic
+	// newest-wins. Only consulted under the "reconcile" action; zero uses the
+	// default.
 	ReconcileMaxPerRun int
 }
 
@@ -6357,8 +6405,8 @@ type mergeSettings struct {
 const defaultMergeSimilarityThreshold float32 = 0.92
 
 // defaultReconcileMaxPerRun caps how many ConflictReconciler calls one merge
-// may make before it falls back to preserve_target. A project can override it
-// via pipeline.MergePolicy.reconcile_max_per_run.
+// may make before it falls back to deterministic newest-wins. A project can
+// override it via pipeline.MergePolicy.reconcile_max_per_run.
 const defaultReconcileMaxPerRun = 50
 
 // mergePolicyPresets are the named policies BranchMergeRequest.Policy accepts.
@@ -6393,9 +6441,10 @@ var mergePolicyPresets = map[string]mergeSettings{
 	// "reconcile" resolves every canonical conflict deterministically-first,
 	// then asks the wired ConflictReconciler (an LLM) to COMBINE only the
 	// residual conflicting values (prefer the richer/union of detail). It does
-	// not run the similarity probe; when no reconciler is wired, or the
-	// reconciler errors, each conflicting object falls back to preserve_target.
-	// Opt-in — the default "partial" policy is unchanged.
+	// not run the similarity probe; when no reconciler is wired, the reconciler
+	// errors, or the per-run cap is exceeded, each conflicting object falls back
+	// to deterministic newest-wins (only an undeterminable-recency residual is
+	// left for review). Opt-in — the default "partial" policy is unchanged.
 	"reconcile": {false, 0, "", "reconcile", defaultReconcileMaxPerRun},
 }
 
@@ -6680,7 +6729,7 @@ func (s *Service) reconcilePropertyDefs(ctx context.Context, projectID uuid.UUID
 // bare property name, plus the model name used (for the audit marker). Every
 // returned value is validated against the type's declared property schema, and
 // the reconciler must answer every conflicting key; any failure returns an
-// error, which the caller maps to the preserve_target fallback.
+// error, which the caller maps to the deterministic newest-wins fallback.
 func (s *Service) reconcileResidual(ctx context.Context, projectID uuid.UUID, typeName string, srcProps, tgtProps map[string]any, residual []string) (map[string]any, string, error) {
 	conflicts := make(map[string]ConflictValue, len(residual))
 	for _, path := range residual {

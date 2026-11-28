@@ -57,7 +57,7 @@ type reconcileCacheEntry struct {
 
 // NewConflictReconciler builds the agents-backed reconcile resolver. Passing a
 // nil resolver or model factory is allowed (Reconcile then always errors and
-// the graph merge falls back to preserve_target).
+// the graph merge falls back to deterministic newest-wins).
 func NewConflictReconciler(modelFactory modelFactory, resolver generativeModelResolver, log *slog.Logger) graph.ConflictReconciler {
 	if log == nil {
 		log = slog.Default()
@@ -72,7 +72,7 @@ func NewConflictReconciler(modelFactory modelFactory, resolver generativeModelRe
 
 // Reconcile combines the residual conflicting values of one object. It returns
 // the resolved value per key and the model name used (for the merge audit
-// marker), or an error to fall back to preserve_target.
+// marker), or an error to fall back to deterministic newest-wins.
 func (r *conflictReconciler) Reconcile(ctx context.Context, req graph.ConflictReconcileRequest) (map[string]any, string, error) {
 	key := r.cacheKey(req)
 
