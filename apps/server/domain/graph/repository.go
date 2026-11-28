@@ -3769,6 +3769,22 @@ func (r *Repository) GetObjectEmbedding(ctx context.Context, projectID, objectID
 	return embedding, nil
 }
 
+// GetExtractionJobCreatedAt returns the created_at of an object-extraction job.
+// It is the recency fallback for newest-wins merge resolution: when a head's
+// `_sources` array carries no `extracted_at`, the producing job's created_at is
+// the next-best monotonic stamp. A missing row is treated as "no recency" by
+// callers (an error propagates as undeterminable, not fatal).
+func (r *Repository) GetExtractionJobCreatedAt(ctx context.Context, jobID uuid.UUID) (time.Time, error) {
+	var createdAt time.Time
+	err := r.db.NewRaw(
+		`SELECT created_at FROM kb.object_extraction_jobs WHERE id = ?`, jobID,
+	).Scan(ctx, &createdAt)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return createdAt, nil
+}
+
 // =============================================================================
 // Branch Operations
 // =============================================================================
