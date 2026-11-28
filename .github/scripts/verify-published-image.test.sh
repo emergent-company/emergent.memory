@@ -244,14 +244,34 @@ expect_stderr "the failure says the tags do not name one image" "do not name one
 expect_stdout_missing "a mixed set never claims a verified publish" "publish verified:"
 
 # ── Witness matching ─────────────────────────────────────────────────────────
+# #1224: when the tag set carries a `sha-` tag it must witness this commit.
+# Otherwise a release re-run or a moved tag verifies a tag set that was already
+# there, although the image need not be this commit's.
 fixture \
   "$ui:0.105.0" sha256:1bdce9f0 \
   "$ui:sha-deadbee" sha256:1bdce9f0
-expect_rc "a sha tag for another commit still verifies the tag set" 0 \
+expect_rc "a sha tag for another commit is red" 1 \
   "VERIFY_TAGS=$ui:0.105.0
 $ui:sha-deadbee" \
   VERIFY_COMMIT=5cb0eebd5
+expect_stderr "the failure names the non-witness sha tag" "does not witness commit 5cb0eebd5"
 expect_stdout_missing "a sha tag for another commit is not a witness" "publish witness:"
+expect_output "a non-witness tag set is not verified" "verified=false"
+
+expect_rc "probe mode reports a non-witness tag set without failing" 0 \
+  "VERIFY_TAGS=$ui:0.105.0
+$ui:sha-deadbee" \
+  VERIFY_REQUIRE=false \
+  VERIFY_COMMIT=5cb0eebd5
+expect_output "probe mode does not verify a non-witness tag set" "verified=false"
+
+# A tag set with no sha tag keeps the advisory behaviour: the caller does not
+# publish a witness, so none is required.
+fixture "$ui:0.105.0" sha256:1bdce9f0
+expect_rc "a tag set without a sha tag verifies without a witness" 0 \
+  "VERIFY_TAGS=$ui:0.105.0" \
+  VERIFY_COMMIT=5cb0eebd5
+expect_stdout_missing "no witness is reported when none was published" "publish witness:"
 
 fixture \
   "$ui:0.105.0" sha256:1bdce9f0 \
@@ -288,6 +308,23 @@ if [ "$got" -eq 0 ] && grep -qxF "verified=true" "$tmp/gho"; then
   ok "GITHUB_OUTPUT is used when VERIFY_OUTPUT is unset"
 else
   bad "GITHUB_OUTPUT is used when VERIFY_OUTPUT is unset (rc=$got)"
+fi
+
+# A local run has neither VERIFY_OUTPUT nor GITHUB_OUTPUT: the verdict is still
+# on stdout, and there is no output file to miss (#1224).
+fixture "$ui:0.105.0" sha256:1bdce9f0
+: >"$tmp/out"
+set +e
+env -u GITHUB_OUTPUT VERIFY_DOCKER="$stub" \
+  "VERIFY_TAGS=$ui:0.105.0" "$script" >"$tmp/stdout" 2>"$tmp/stderr"
+got=$?
+set -e
+if [ -s "$tmp/out" ]; then
+  bad "a local run writes no output file"
+elif [ "$got" -eq 0 ] && grep -qF "publish verified: ${ui}:0.105.0" "$tmp/stdout"; then
+  ok "a local run reports the verdict on stdout without an output file"
+else
+  bad "a local run reports the verdict on stdout without an output file (rc=$got)"
 fi
 
 # An unreachable registry is "not verified", not a crash or a pass.

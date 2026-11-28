@@ -21,6 +21,10 @@
 #   * every tag resolves and they all name one manifest digest -> verified. The
 #     release is pullable by its pinned tag, and the `sha-<short>` tag published
 #     from the same build is the witness that this is *this commit's* image.
+#     When the tag set carries a `sha-` tag, that witness must match
+#     VERIFY_COMMIT (#1224): a release re-run or a moved tag otherwise verifies
+#     green against a tag set that was already there, although the image need
+#     not be this commit's.
 #   * a tag is missing -> the publish is incomplete. A build that never finished
 #     leaves nothing named; a build interrupted mid-naming leaves a subset.
 #     Both are red, and the remedy is a re-run, not an assumption.
@@ -48,7 +52,8 @@
 #                         and/or comma separated, as `metadata-action` emits
 #                         them                                            (required)
 #   VERIFY_COMMIT         short commit the build ran at; the `sha-` tag whose
-#                         suffix is a prefix of it is reported as the witness  (optional)
+#                         suffix is a prefix of it is the witness. Required to
+#                         match when the tag set carries a `sha-` tag (#1224)   (optional)
 #   VERIFY_OUTCOME        the first build step's outcome, for the message      (optional)
 #   VERIFY_RETRY_OUTCOME  the retry step's outcome, for the message            (optional)
 #   VERIFY_REQUIRE        `true` (default) fails the run when the tag set is
@@ -97,6 +102,10 @@ notice() {
 # A manifest list resolves to one digest as a whole, which is the artifact a
 # consumer pins. Any unreadable ref (404, auth, transport) is just "not
 # resolved" — the caller's verdict is "not verified", never a guess.
+#
+# Deliberately duplicated in release-versions.sh (#1224): both are standalone
+# CLI entry points, so there is no shared source to import; noted rather than
+# extracted for two callers.
 inspect_digest() {
   local docker="$1" ref="$2" out
   out="$("$docker" buildx imagetools inspect --format '{{json .Manifest}}' "$ref" 2>/dev/null)" || return 1
@@ -213,22 +222,40 @@ main() {
   # image. metadata-action publishes a 7-character suffix while the publishers
   # record `git rev-parse --short` (9 characters here), so either form may be a
   # prefix of the other.
-  local witness="" witness_digest="" suffix i
+  #
+  # When the tag set carries a `sha-` tag, the witness is required (#1224): a
+  # release re-run, or a tag that moved, otherwise verifies green against a tag
+  # set that was already there although the image need not be this commit's.
+  # A tag set with no `sha-` tag at all keeps the advisory behaviour, so a
+  # caller that does not publish one is not newly failed.
+  local witness="" witness_digest="" suffix i sha_tag_present=false
+  local -a unmatched_sha_tags=()
   if [ -n "$commit" ]; then
     for i in "${!resolved_tags[@]}"; do
       tag="${resolved_tags[$i]}"
       case "$tag" in
         *:sha-*)
+          sha_tag_present=true
           suffix="${tag##*:sha-}"
           if [ -n "$suffix" ] \
             && { [[ "$commit" == "$suffix"* ]] || [[ "$suffix" == "$commit"* ]]; }; then
             witness="$tag"
             witness_digest="${resolved_digests[$i]}"
-            break
+          else
+            unmatched_sha_tags+=("$tag")
           fi
           ;;
       esac
     done
+  fi
+
+  # The tag set resolving to one image is not enough when it carries a sha tag:
+  # unless that tag names this commit, the tags may be a pre-existing release's
+  # image (#1224). The mismatch is deterministic, so it is checked once after
+  # the probe loop rather than retried.
+  if $verified && [ -n "$commit" ] && $sha_tag_present && [ -z "$witness" ]; then
+    verified=false
+    reason="the tag set carries a sha tag that does not witness commit ${commit} (${unmatched_sha_tags[*]}); the tags may belong to a different build, such as a release re-run or a moved tag"
   fi
 
   if [ -n "$output" ]; then

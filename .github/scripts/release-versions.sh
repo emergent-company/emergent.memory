@@ -631,6 +631,8 @@ run_check() {
   echo "alias=rebuild service=${service}"
 }
 
+# Deliberately duplicated in verify-published-image.sh (#1224): both scripts are
+# standalone CLI entry points, so there is no shared source to import.
 inspect_digest() {
   local docker="$1" ref="$2" out
   out="$("$docker" buildx imagetools inspect --format '{{json .Manifest}}' "$ref" 2>/dev/null)" || return 1
