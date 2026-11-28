@@ -86,18 +86,19 @@ type graphObject struct {
 }
 
 type episodeScore struct {
-	Episode        string   `json:"episode"`
-	Expected       int      `json:"expected"`        // cumulative ground-truth entities
-	Found          int      `json:"found"`           // cumulative entities matched (lenient)
-	FoundExact     int      `json:"found_exact"`     // cumulative entities matched by exact normalized name
-	Recall         float64  `json:"recall"`          // found / expected (lenient)
-	RecallExact    float64  `json:"recall_exact"`    // found_exact / expected
-	Objects        int      `json:"objects"`         // non-document graph objects
-	Unmatched      int      `json:"unmatched"`       // objects matching no ground-truth entity (may include real-but-unlisted entities)
-	Precision      float64  `json:"precision"`       // (objects - unmatched) / objects
-	DuplicateNames int      `json:"duplicate_names"` // ground-truth names mapped to >1 object
-	Edges          int      `json:"edges"`           // cumulative graph relationships
-	Types          []string `json:"types"`           // distinct object types observed
+	Episode              string   `json:"episode"`
+	Expected             int      `json:"expected"`               // cumulative ground-truth entities
+	Found                int      `json:"found"`                  // cumulative entities matched (lenient)
+	FoundExact           int      `json:"found_exact"`            // cumulative entities matched by exact normalized name
+	Recall               float64  `json:"recall"`                 // found / expected (lenient)
+	RecallExact          float64  `json:"recall_exact"`           // found_exact / expected
+	Objects              int      `json:"objects"`                // non-document graph objects
+	Unmatched            int      `json:"unmatched"`              // objects matching no ground-truth entity (may include real-but-unlisted entities)
+	Precision            float64  `json:"precision"`              // (objects - unmatched) / objects
+	DuplicateNames       int      `json:"duplicate_names"`        // ground-truth names mapped to >1 object (fuzzy multi-match)
+	DuplicateObjectNames int      `json:"duplicate_object_names"` // distinct non-document object names appearing >1x on main (real duplicates)
+	Edges                int      `json:"edges"`                  // cumulative graph relationships
+	Types                []string `json:"types"`                  // distinct object types observed
 }
 
 // normalize folds a name to a comparable form: lowercase, alphanumerics only.
@@ -226,6 +227,27 @@ func scoreEpisode(epID string, cumulative []entity, objects []graphObject, edges
 	if s.Expected > 0 {
 		s.Recall = float64(s.Found) / float64(s.Expected)
 		s.RecallExact = float64(s.FoundExact) / float64(s.Expected)
+	}
+	// Real duplicate object names on main: distinct normalized non-document object
+	// names appearing more than once. Unlike DuplicateNames (fuzzy ground-truth
+	// multi-match), this is the actual namesake count in the graph.
+	nameCounts := map[string]int{}
+	for _, o := range objects {
+		if isDocumentType(o.Type) {
+			continue
+		}
+		name := o.Name
+		if name == "" {
+			name = o.Key
+		}
+		if n := normalize(name); n != "" {
+			nameCounts[n]++
+		}
+	}
+	for _, c := range nameCounts {
+		if c > 1 {
+			s.DuplicateObjectNames++
+		}
 	}
 	for t := range types {
 		s.Types = append(s.Types, t)
@@ -513,8 +535,8 @@ func main() {
 		}
 		s := scoreEpisode(ep.ID, cumulative, objects, edges)
 		rec.Episodes = append(rec.Episodes, s)
-		log.Printf("  expected=%d found=%d (exact=%d) recall=%.2f (exact=%.2f) objects=%d unmatched=%d precision=%.2f duplicates=%d edges=%d types=%v",
-			s.Expected, s.Found, s.FoundExact, s.Recall, s.RecallExact, s.Objects, s.Unmatched, s.Precision, s.DuplicateNames, s.Edges, s.Types)
+		log.Printf("  expected=%d found=%d (exact=%d) recall=%.2f (exact=%.2f) objects=%d unmatched=%d precision=%.2f duplicates=%d dup_obj=%d edges=%d types=%v",
+			s.Expected, s.Found, s.FoundExact, s.Recall, s.RecallExact, s.Objects, s.Unmatched, s.Precision, s.DuplicateNames, s.DuplicateObjectNames, s.Edges, s.Types)
 	}
 
 	if err := appendLog(*logFile, rec); err != nil {
