@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/v2/model"
@@ -860,8 +861,9 @@ const completeAnswer = `{"discovered_types":[{"type_name":"Customer","descriptio
 
 func newBatchTestService(llm model.LLM) *Service {
 	return &Service{
-		modelFactory: &testModelFactory{model: llm},
-		log:          slog.Default(),
+		modelFactory:    &testModelFactory{model: llm},
+		log:             slog.Default(),
+		llmRetryBackoff: []time.Duration{0, 0, 0},
 	}
 }
 
@@ -1003,9 +1005,14 @@ func TestDiscoverBatchTypes_MultiDocumentSplitKeepsBudget(t *testing.T) {
 
 // TestDiscoverBatchTypes_CompleteEmptyAnswerIsNotAFailure pins the distinction
 // the retry logic depends on: a complete answer that found no types is stored
-// as zero types, not retried and not failed.
+// as zero types, not failed. A genuinely-empty answer is re-asked a couple of
+// times (a model blip) before the zero-type result is accepted.
 func TestDiscoverBatchTypes_CompleteEmptyAnswerIsNotAFailure(t *testing.T) {
-	llm := &sequenceLLM{responses: []seqResponse{{text: `{"discovered_types":[]}`}}}
+	llm := &sequenceLLM{responses: []seqResponse{
+		{text: `{"discovered_types":[]}`},
+		{text: `{"discovered_types":[]}`},
+		{text: `{"discovered_types":[]}`},
+	}}
 	svc := newBatchTestService(llm)
 
 	groups, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", 0, nil)
@@ -1015,8 +1022,8 @@ func TestDiscoverBatchTypes_CompleteEmptyAnswerIsNotAFailure(t *testing.T) {
 	if types := allGroupTypes(groups); len(types) != 0 {
 		t.Fatalf("types = %+v, want none", types)
 	}
-	if llm.calls != 1 {
-		t.Fatalf("model calls = %d, want 1", llm.calls)
+	if llm.calls != 3 {
+		t.Fatalf("model calls = %d, want 3 (initial + two empty retries)", llm.calls)
 	}
 }
 
