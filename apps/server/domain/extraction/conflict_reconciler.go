@@ -227,7 +227,7 @@ func buildReconcilePrompt(req graph.ConflictReconcileRequest) string {
 	b.WriteString("Conflicting properties:\n")
 	b.WriteString(string(conflictsJSON))
 	b.WriteString("\n\n")
-	b.WriteString("Respond with a JSON object whose keys are the property names and whose values are the reconciled values. For example: {\"job_title\": \"Waitress at Central Perk\"}.\n")
+	b.WriteString("Respond with ONLY a single JSON object (no prose, no markdown code fences) whose keys are the property names listed above and whose values are the reconciled values — exactly one entry per listed property. For example: {\"job_title\": \"Waitress at Central Perk\"}.\n")
 	return b.String()
 }
 
@@ -235,7 +235,7 @@ func buildReconcilePrompt(req graph.ConflictReconcileRequest) string {
 // It accepts a bare object of key→value or a {"values": {…}} wrapper, and only
 // keeps keys that were actually asked about.
 func parseReconcileResponse(raw string, asked map[string]graph.ConflictValue) (map[string]any, error) {
-	trimmed := strings.TrimSpace(raw)
+	trimmed := extractJSONObject(raw)
 	if trimmed == "" {
 		return nil, fmt.Errorf("empty model response")
 	}
