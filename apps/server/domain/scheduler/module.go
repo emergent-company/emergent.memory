@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	appcfg "github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/storage"
@@ -80,6 +81,7 @@ type TaskParams struct {
 	UserSvc            *auth.UserProfileService
 	DeletionTask       *ProjectDeletionTask
 	SkillCurator       *skills.Curator
+	GraphSvc           *graph.Service
 }
 
 // RegisterTasks registers all scheduled tasks
@@ -198,6 +200,22 @@ func RegisterTasks(p TaskParams) error {
 	if err := addScheduledTask(p.Scheduler, p.Log, "document_parsing_sweep",
 		p.Cfg.DocumentParsingSweepSchedule, p.Cfg.DocumentParsingSweepInterval, documentParsingSweep.Run); err != nil {
 		p.Log.Error("failed to register document parsing sweep task",
+			slog.String("error", err.Error()))
+	}
+
+	// Register the merge convergence sweep (every 5 minutes by default). It is
+	// the safety net for the auto-merge-on-extraction path: a branch whose
+	// auto-merge was skipped because its embeddings were not yet settled is
+	// re-selected once ready and merged under the project's pipeline policy, so
+	// extraction data cannot strand on a staging branch forever.
+	mergeConvergenceSweep := NewMergeConvergenceSweepTask(
+		p.DB, p.Log, p.GraphSvc,
+		time.Duration(p.Cfg.MergeConvergenceSweepMinAgeMinutes)*time.Minute,
+		p.Cfg.MergeConvergenceSweepBatchSize,
+	)
+	if err := addScheduledTask(p.Scheduler, p.Log, "merge_convergence_sweep",
+		p.Cfg.MergeConvergenceSweepSchedule, p.Cfg.MergeConvergenceSweepInterval, mergeConvergenceSweep.Run); err != nil {
+		p.Log.Error("failed to register merge convergence sweep task",
 			slog.String("error", err.Error()))
 	}
 
