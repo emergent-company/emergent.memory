@@ -135,8 +135,8 @@ func TestMergeBranchReconcileCombinesResidualConflict(t *testing.T) {
 }
 
 // TestMergeBranchReconcileFallsBackOnReconcilerError pins the fallback: a wired
-// reconciler that errors leaves the object for review (preserve_target) and the
-// branch stays open.
+// reconciler that errors falls back to deterministic newest-wins (the newer
+// source survives), so the branch still merges instead of stranding the data.
 func TestMergeBranchReconcileFallsBackOnReconcilerError(t *testing.T) {
 	stub := &reconcileStub{fn: func(context.Context, graph.ConflictReconcileRequest) (map[string]any, string, error) {
 		return nil, "", errStubReconcile
@@ -148,15 +148,19 @@ func TestMergeBranchReconcileFallsBackOnReconcilerError(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.Equal(t, 1, resp.LeftForReviewCount, "a failed reconcile must leave the object for review")
-	require.Nil(t, branchMergedAt(t, ctx, db, branchID), "a failed reconcile must keep the branch open")
+	require.Equal(t, 1, resp.ConflictCount)
+	require.Zero(t, resp.LeftForReviewCount, "a reconciler error falls back to newest, so the branch converges")
+	require.NotNil(t, branchMergedAt(t, ctx, db, branchID), "a newest-resolved reconcile must close the branch")
 
 	state := readMergedObjectState(t, ctx, db, pid)
-	require.Equal(t, "radio host", state.Role, "the target value must be preserved on fallback")
+	require.Equal(t, "author", state.Role, "the newer source value must win on fallback")
+	raw, _ := json.Marshal(state.ChangeSum)
+	require.Contains(t, string(raw), "reconcile_fallback_newest", "the change_summary must record the newest fallback resolution")
 }
 
 // TestMergeBranchReconcileFallsBackOnPartialAnswer pins the fallback when the
-// reconciler does not answer every conflicting key (treated as invalid).
+// reconciler does not answer every conflicting key (treated as invalid): it too
+// falls back to deterministic newest-wins rather than leaving the object open.
 func TestMergeBranchReconcileFallsBackOnPartialAnswer(t *testing.T) {
 	stub := &reconcileStub{fn: func(context.Context, graph.ConflictReconcileRequest) (map[string]any, string, error) {
 		return map[string]any{}, "stub", nil // no answer for "role"
@@ -168,14 +172,18 @@ func TestMergeBranchReconcileFallsBackOnPartialAnswer(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.Equal(t, 1, resp.LeftForReviewCount, "a partial reconciler answer must leave the object for review")
-	require.Nil(t, branchMergedAt(t, ctx, db, branchID))
+	require.Zero(t, resp.LeftForReviewCount, "a partial reconciler answer falls back to newest")
+	require.NotNil(t, branchMergedAt(t, ctx, db, branchID))
+
+	state := readMergedObjectState(t, ctx, db, pid)
+	require.Equal(t, "author", state.Role, "the newer source value must win on fallback")
 }
 
-// TestMergeBranchReconcileNoReconcilerLeavesForReview pins the opt-in guard: a
-// "reconcile" merge with no wired reconciler leaves a genuine conflict for
-// review (it never silently drops the source value).
-func TestMergeBranchReconcileNoReconcilerLeavesForReview(t *testing.T) {
+// TestMergeBranchReconcileNoReconcilerFallsBackToNewest pins the no-reconciler
+// guard: a "reconcile" merge with no wired reconciler falls back to deterministic
+// newest-wins (never silently dropping the source value), so a determinable-
+// recency conflict still converges.
+func TestMergeBranchReconcileNoReconcilerFallsBackToNewest(t *testing.T) {
 	ctx, db, svc, pid, branchID := setupReconcileMergeTest(t, "graph_reconcile_nil", "radio host", "author", nil)
 
 	resp, err := svc.MergeBranch(ctx, pid, nil, &graph.BranchMergeRequest{
@@ -183,40 +191,140 @@ func TestMergeBranchReconcileNoReconcilerLeavesForReview(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.Equal(t, 1, resp.LeftForReviewCount, "a reconcile merge with no reconciler must leave the conflict for review")
-	require.Nil(t, branchMergedAt(t, ctx, db, branchID))
+	require.Equal(t, 1, resp.ConflictCount)
+	require.Zero(t, resp.LeftForReviewCount, "no reconciler falls back to newest, so the branch converges")
+	require.NotNil(t, branchMergedAt(t, ctx, db, branchID), "a newest-resolved reconcile must close the branch")
+
+	state := readMergedObjectState(t, ctx, db, pid)
+	require.Equal(t, "author", state.Role, "the newer source value must win on fallback")
+	require.Equal(t, "New York", state.City, "the additive source-only key must be kept")
+	require.Equal(t, 2, state.SourceCount, "provenance from both sides must be unioned")
+	raw, _ := json.Marshal(state.ChangeSum)
+	require.Contains(t, string(raw), "reconcile_fallback_newest", "the change_summary must record the newest fallback resolution")
 }
 
-// TestMergeBranchReconcileCapExceededLeavesForReview pins the per-run cap: past
-// ReconcileMaxPerRun, later conflicts fall back to preserve_target.
-func TestMergeBranchReconcileCapExceededLeavesForReview(t *testing.T) {
+// TestMergeBranchReconcileUndeterminableRecencyLeavesForReview pins the last
+// resort: a residual conflict with a recency tie (same extracted_at) and no
+// reconciler falls back to preserve_target — it is left for review, not dropped.
+func TestMergeBranchReconcileUndeterminableRecencyLeavesForReview(t *testing.T) {
+	ctx, db, repo, svc, pid := setupDeterministicMergeTest(t, "graph_reconcile_tie")
+	name := "Barry Farber"
+
+	_, err := svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+		Type: "Person", Key: strPtr("barry-farber"), Name: &name,
+		Properties: map[string]any{
+			"name":     name,
+			"role":     "radio host",
+			"_sources": seedSources("doc-tgt", "job-tgt", "2024-01-01T00:00:00Z"),
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	sourceBranch := &graph.Branch{ID: uuid.New(), ProjectID: pid, Name: "tie-src"}
+	require.NoError(t, repo.CreateBranch(ctx, sourceBranch))
+	_, err = svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+		Type: "Person", Key: strPtr("barry-farber"), Name: &name,
+		BranchID: &sourceBranch.ID,
+		Properties: map[string]any{
+			"name":     name,
+			"role":     "author",
+			"_sources": seedSources("doc-src", "job-src", "2024-01-01T00:00:00Z"),
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	resp, err := svc.MergeBranch(ctx, pid, nil, &graph.BranchMergeRequest{
+		SourceBranchID: sourceBranch.ID, Execute: true, Policy: "reconcile",
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, 1, resp.ConflictCount)
+	require.Equal(t, 1, resp.LeftForReviewCount, "an undeterminable-recency residual is the last-resort preserve_target")
+	require.Nil(t, branchMergedAt(t, ctx, db, sourceBranch.ID), "an undeterminable-recency residual keeps the branch open")
+
+	state := readMergedObjectState(t, ctx, db, pid)
+	require.Equal(t, "radio host", state.Role, "the target value must be preserved on the last-resort fallback")
+}
+
+// TestMergeBranchReconcileErrorWithUndeterminableRecencyLeavesForReview pins the
+// reconcileLeft correction: a wired reconciler that errors on a recency-tie
+// residual falls all the way through to preserve_target, and the optimistic
+// pre-compute is corrected so the branch is NOT closed over the unmerged object.
+func TestMergeBranchReconcileErrorWithUndeterminableRecencyLeavesForReview(t *testing.T) {
+	stub := &reconcileStub{fn: func(context.Context, graph.ConflictReconcileRequest) (map[string]any, string, error) {
+		return nil, "", errStubReconcile
+	}}
+	ctx, db, repo, svc, pid := setupDeterministicMergeTest(t, "graph_reconcile_err_tie")
+	svc.SetConflictReconciler(stub)
+	name := "Barry Farber"
+
+	_, err := svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+		Type: "Person", Key: strPtr("barry-farber"), Name: &name,
+		Properties: map[string]any{
+			"name":     name,
+			"role":     "radio host",
+			"_sources": seedSources("doc-tgt", "job-tgt", "2024-01-01T00:00:00Z"),
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	sourceBranch := &graph.Branch{ID: uuid.New(), ProjectID: pid, Name: "err-tie-src"}
+	require.NoError(t, repo.CreateBranch(ctx, sourceBranch))
+	_, err = svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+		Type: "Person", Key: strPtr("barry-farber"), Name: &name,
+		BranchID: &sourceBranch.ID,
+		Properties: map[string]any{
+			"name":     name,
+			"role":     "author",
+			"_sources": seedSources("doc-src", "job-src", "2024-01-01T00:00:00Z"),
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	resp, err := svc.MergeBranch(ctx, pid, nil, &graph.BranchMergeRequest{
+		SourceBranchID: sourceBranch.ID, Execute: true, Policy: "reconcile",
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, 1, resp.ConflictCount)
+	require.Equal(t, 1, resp.LeftForReviewCount, "an errored reconcile on a recency tie must leave the object for review")
+	require.Nil(t, branchMergedAt(t, ctx, db, sourceBranch.ID), "the optimistic pre-compute must be corrected so the branch stays open")
+
+	state := readMergedObjectState(t, ctx, db, pid)
+	require.Equal(t, "radio host", state.Role, "the target value must be preserved on the last-resort fallback")
+}
+
+// TestMergeBranchReconcileCapExceededFallsBackToNewest pins the per-run cap:
+// past ReconcileMaxPerRun, later conflicts fall back to deterministic
+// newest-wins (newer source survives) instead of being parked for review.
+func TestMergeBranchReconcileCapExceededFallsBackToNewest(t *testing.T) {
 	ctx, db, repo, svc, pid := setupDeterministicMergeTest(t, "graph_reconcile_cap")
 	stub := &reconcileStub{fn: func(_ context.Context, req graph.ConflictReconcileRequest) (map[string]any, string, error) {
 		return map[string]any{"role": "combined"}, "stub", nil
 	}}
 	svc.SetConflictReconciler(stub)
 
-	create := func(key, name, role, doc, job string, branchID *uuid.UUID) {
+	create := func(key, name, role, doc, job, extractedAt string, branchID *uuid.UUID) {
 		_, err := svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
 			Type: "Person", Key: strPtr(key), Name: &name,
 			BranchID: branchID,
 			Properties: map[string]any{
 				"name":     name,
 				"role":     role,
-				"_sources": seedSources(doc, job, "2024-01-01T00:00:00Z"),
+				"_sources": seedSources(doc, job, extractedAt),
 			},
 		}, nil)
 		require.NoError(t, err)
 	}
 
-	// Two target objects.
-	create("person-a", "Alpha", "radio host", "doc-tgt-a", "job-tgt-a", nil)
-	create("person-b", "Beta", "radio host", "doc-tgt-b", "job-tgt-b", nil)
+	// Two target objects (older) and two source objects (newer).
+	create("person-a", "Alpha", "radio host", "doc-tgt-a", "job-tgt-a", "2024-01-01T00:00:00Z", nil)
+	create("person-b", "Beta", "radio host", "doc-tgt-b", "job-tgt-b", "2024-01-01T00:00:00Z", nil)
 
 	sourceBranch := &graph.Branch{ID: uuid.New(), ProjectID: pid, Name: "cap-src"}
 	require.NoError(t, repo.CreateBranch(ctx, sourceBranch))
-	create("person-a", "Alpha", "author", "doc-src-a", "job-src-a", &sourceBranch.ID)
-	create("person-b", "Beta", "author", "doc-src-b", "job-src-b", &sourceBranch.ID)
+	create("person-a", "Alpha", "author", "doc-src-a", "job-src-a", "2024-02-01T00:00:00Z", &sourceBranch.ID)
+	create("person-b", "Beta", "author", "doc-src-b", "job-src-b", "2024-02-01T00:00:00Z", &sourceBranch.ID)
 
 	resp, err := svc.MergeBranch(ctx, pid, nil, &graph.BranchMergeRequest{
 		SourceBranchID: sourceBranch.ID, Execute: true, Policy: "reconcile", ReconcileMaxPerRun: 1,
@@ -224,9 +332,9 @@ func TestMergeBranchReconcileCapExceededLeavesForReview(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, 2, resp.ConflictCount)
-	require.Equal(t, 1, resp.LeftForReviewCount, "only one conflict may be reconciled under a cap of 1")
+	require.Zero(t, resp.LeftForReviewCount, "the cap-exceeded conflict falls back to newest, so the branch converges")
 	require.Equal(t, 1, stub.calls, "the reconciler must be called at most once under a cap of 1")
-	require.Nil(t, branchMergedAt(t, ctx, db, sourceBranch.ID), "a partial reconcile must keep the branch open")
+	require.NotNil(t, branchMergedAt(t, ctx, db, sourceBranch.ID), "a fully-resolved reconcile (with newest fallback) must close the branch")
 }
 
 // errStubReconcile is the sentinel error for the fallback test.

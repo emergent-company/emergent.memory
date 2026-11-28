@@ -88,7 +88,7 @@ func TestConflictReconcilerMergesValidJSON(t *testing.T) {
 }
 
 // TestConflictReconcilerRejectsInvalidJSON pins the fallback: malformed JSON is
-// an error (the graph merge maps it to preserve_target).
+// an error (the graph merge maps it to deterministic newest-wins).
 func TestConflictReconcilerRejectsInvalidJSON(t *testing.T) {
 	r := NewConflictReconciler(
 		&reconcileTestModelFactory{llm: &reconcileTestLLM{response: `not-json`}},

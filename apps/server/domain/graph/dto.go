@@ -1006,8 +1006,8 @@ type BranchMergeRequest struct {
 
 	// ReconcileMaxPerRun caps how many ConflictReconciler calls a single merge
 	// may make before subsequent "reconcile" conflicts fall back to
-	// preserve_target. 0 uses the default (50). Only consulted when the resolved
-	// conflict action is "reconcile".
+	// deterministic newest-wins. 0 uses the default (50). Only consulted when
+	// the resolved conflict action is "reconcile".
 	ReconcileMaxPerRun int `json:"reconcile_max_per_run,omitempty"`
 }
 

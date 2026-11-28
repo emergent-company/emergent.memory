@@ -16,11 +16,11 @@ import (
 // combining the two sides (preferring the richer/union of detail) rather than
 // picking one. Implemented by the extraction module's generative client; wired
 // via SetConflictReconciler. A nil reconciler makes "reconcile" fall back to
-// preserve_target.
+// deterministic newest-wins for residual conflicts.
 type ConflictReconciler interface {
 	// Reconcile returns the resolved value per conflicting key and the model
 	// name used (for the merge audit marker). Any error makes the caller fall
-	// back to preserve_target for the object.
+	// back to deterministic newest-wins for the object.
 	Reconcile(ctx context.Context, req ConflictReconcileRequest) (values map[string]any, model string, err error)
 }
 

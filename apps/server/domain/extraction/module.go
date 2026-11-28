@@ -297,7 +297,7 @@ func provideDocumentSignalsReaderForMCP(docService *documents.Service) mcp.Docum
 // conflicting property values. extraction imports graph (graph never imports
 // extraction), so there is no cycle; fx resolves *graph.Service as part of the
 // same application. Missing dependencies leave the graph reconciler nil, which
-// makes "reconcile" fall back to preserve_target.
+// makes "reconcile" fall back to deterministic newest-wins.
 func wireConflictReconciler(graphSvc *graph.Service, modelFactory *adk.ModelFactory, modelCfg *modelconfig.Service, log *slog.Logger) {
 	if graphSvc == nil || modelFactory == nil || modelCfg == nil {
 		return
