@@ -122,6 +122,8 @@ systemPrompt: |
       - every relationship sourceType/targetType names a defined objectType
       - every agent has a non-empty name
       - every seed object has a type and (where re-appliable) a key
+      - every seed object that needs a human label carries it in the top-level
+        `name` field (the display title), not in `properties.name`
       - every seed relationship has type + (srcKey+dstKey) or (srcId+dstId)
 
   ## Guardrails

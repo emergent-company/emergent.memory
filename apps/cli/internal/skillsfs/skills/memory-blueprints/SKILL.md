@@ -138,14 +138,20 @@ One JSON object per line:
 {
   "type": "Person",        // required
   "key": "alice-smith",    // optional — stable identity; enables idempotent re-apply
+  "name": "Alice Smith",   // optional — the object's display title (see below)
   "status": "active",      // optional
   "labels": ["vip"],       // optional
   "properties": {          // optional
-    "name": "Alice Smith",
     "role": "Engineer"
   }
 }
 ```
+
+`name` is the object's **title** — the label rendered in the UI, lists and search
+results. It is the only title carrier: `properties.name` and `properties.title`
+are ordinary properties and never become the display title, so a seed without
+`name` renders as `type · #ref`. `name` is trimmed, capped at 512 characters,
+and preserved by `dump` → `install` / `graph objects create-batch` round trips.
 
 ### Relationship record (`seed/relationships/<TypeName>.jsonl`)
 

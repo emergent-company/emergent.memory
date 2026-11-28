@@ -305,3 +305,54 @@ func TestDumper_SplitTriggeredAt50MBBoundary(t *testing.T) {
 
 	_ = fmt.Sprintf // suppress unused import
 }
+
+// TestDumper_ObjectNameRoundTrip pins #1234: the display name (`kb.graph_objects.name`)
+// is written to the seed record's `name` field, and a dump can be read back with
+// blueprints.LoadSeedPath without losing the title. properties["name"] remains an
+// ordinary property.
+func TestDumper_ObjectNameRoundTrip(t *testing.T) {
+	key := "chat-room"
+	name := "Chat Room"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/objects/search"):
+			obj := &sdkgraph.GraphObject{
+				EntityID: "eid-001", Type: "Screen", Key: &key, Name: &name,
+				Properties: map[string]any{"name": "chat-room"},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchObjectsResponse{
+				Items: []*sdkgraph.GraphObject{obj}, Total: 1,
+			})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/relationships/search"):
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(sdkgraph.SearchRelationshipsResponse{Items: nil, Total: 0})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client := newTestGraphClient(srv.URL)
+	outputDir := t.TempDir()
+
+	d := blueprints.NewDumper(client, nil, nil)
+	if _, err := d.Run(context.Background(), outputDir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	imp, err := blueprints.LoadSeedPath(outputDir)
+	if err != nil {
+		t.Fatalf("load dumped seed: %v", err)
+	}
+	if len(imp.Objects) != 1 {
+		t.Fatalf("expected 1 object, got %d", len(imp.Objects))
+	}
+	got := imp.Objects[0]
+	if got.Name != "Chat Room" {
+		t.Fatalf("expected Name \"Chat Room\" after round trip, got %q", got.Name)
+	}
+	if got.Properties["name"] != "chat-room" {
+		t.Errorf("expected properties.name to survive as an ordinary property, got %v", got.Properties["name"])
+	}
+}

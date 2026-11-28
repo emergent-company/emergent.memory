@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/blueprints"
@@ -459,5 +460,46 @@ func writeFile(t *testing.T, base, relPath, content string) {
 	}
 	if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
+	}
+}
+
+func TestLoadDir_SeedObjects_NameLoadedAndTrimmed(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "seed/objects/Screen.jsonl", `{"type":"Screen","key":"chat-room","name":"  Chat Room  ","properties":{"name":"chat-room"}}
+`)
+
+	_, _, _, _, objects, _, results, err := blueprints.LoadDir(dir, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected 0 error results, got %d: %v", len(results), results)
+	}
+	if len(objects) != 1 {
+		t.Fatalf("expected 1 object, got %d", len(objects))
+	}
+	if objects[0].Name != "Chat Room" {
+		t.Errorf("expected trimmed Name \"Chat Room\", got %q", objects[0].Name)
+	}
+}
+
+func TestLoadDir_SeedObjects_NameTooLong(t *testing.T) {
+	dir := t.TempDir()
+	longName := strings.Repeat("x", 513)
+	writeFile(t, dir, "seed/objects/Screen.jsonl", `{"type":"Screen","key":"chat-room","name":"`+longName+`"}
+`)
+
+	_, _, _, _, objects, _, results, err := blueprints.LoadDir(dir, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(objects) != 0 {
+		t.Errorf("expected the over-long record to be rejected, got %d objects", len(objects))
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 error result, got %d", len(results))
+	}
+	if !strings.Contains(results[0].Error.Error(), "name is too long") {
+		t.Errorf("expected name-too-long error, got %v", results[0].Error)
 	}
 }

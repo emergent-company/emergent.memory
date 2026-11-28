@@ -232,6 +232,9 @@ func (s *Seeder) applyObjectBatch(ctx context.Context, batch []SeedObjectRecord,
 			if rec.Key != "" {
 				req.Key = &rec.Key
 			}
+			if rec.Name != "" {
+				req.Name = &rec.Name
+			}
 			if rec.Status != "" {
 				req.Status = &rec.Status
 			}
@@ -278,6 +281,9 @@ func (s *Seeder) applyObjectBatch(ctx context.Context, batch []SeedObjectRecord,
 				Properties: rec.Properties,
 				Labels:     rec.Labels,
 				BranchID:   s.branchPtr(),
+			}
+			if rec.Name != "" {
+				req.Name = &rec.Name
 			}
 			if rec.Status != "" {
 				req.Status = &rec.Status
