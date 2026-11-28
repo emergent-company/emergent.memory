@@ -3546,8 +3546,7 @@ BLUEPRINT SEED FORMAT (round-trip for 'memory blueprints dump'):
   .jsonl file. Records are upserted by key, "srcKey"/"dstKey" relationship
   endpoints are resolved after the objects are written, and each unreadable
   row is reported without aborting the import. Files named _untyped.jsonl are
-  read back as type "Untyped". An object record's optional "name" is the
-  object's display title; properties.name is an ordinary property.
+  read back as type "Untyped".
 
 BRANCHES:
   Pass --branch to write into a graph branch instead of the main graph. The
