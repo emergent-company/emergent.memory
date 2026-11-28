@@ -66,6 +66,12 @@ func TestValidate(t *testing.T) {
 		t.Fatal("expected bad merge policy to fail")
 	}
 
+	withNewest := good
+	withNewest.Merge.Policy = "partial_newest"
+	if err := Validate(withNewest); err != nil {
+		t.Fatalf("partial_newest must be an accepted merge policy: %v", err)
+	}
+
 	bad = good
 	bad.Apply.Target = "meetings"
 	if err := Validate(bad); err == nil {

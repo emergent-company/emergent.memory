@@ -4,10 +4,11 @@ import "testing"
 
 func TestResolveAutoMergePolicy(t *testing.T) {
 	cases := map[string]string{
-		"partial":   "partial",
-		"enrich":    "enrich",
-		"":          "partial",
-		"overwrite": "partial",
+		"partial":        "partial",
+		"enrich":         "enrich",
+		"partial_newest": "partial_newest",
+		"":               "partial",
+		"overwrite":      "partial",
 	}
 	for in, want := range cases {
 		if got := resolveAutoMergePolicy(in); got != want {

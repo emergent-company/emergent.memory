@@ -5302,6 +5302,17 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			case "overwrite":
 				s.Resolution = "overwritten"
 				resolvedCount++
+			case "newest":
+				// Mirror applyMerge exactly: only a same-entity re-extraction
+				// whose drift does not touch an identity property auto-resolves.
+				if s.SameEntityTargetID != nil && !hasSameEntityIdentityConflict(s.Conflicts) {
+					s.Resolution = "newest"
+					resolvedCount++
+				} else {
+					s.Resolution = "skipped"
+					skippedCount++
+					leftForReview++
+				}
 			case "preserve_target":
 				s.Resolution = "skipped"
 				skippedCount++
@@ -5723,6 +5734,27 @@ func (s *Service) applyMerge(
 				// Source wins all conflicting keys.
 				mergedProps = mergeProps(prevHead.Properties, src.Properties)
 				mergeResolution = "overwritten"
+			case "newest":
+				// Opt-in auto-resolution of same-entity re-extraction drift
+				// (#1222). It is deliberately narrow: only an exact-key
+				// same-entity match whose drift leaves the entity's identity
+				// alone auto-takes the newer (source) value. A canonical-id
+				// conflict (a genuine divergence between branches) and any
+				// identity-property drift stay on the target for review,
+				// exactly as the partial policy would leave them.
+				if summary.SameEntityTargetID == nil || hasSameEntityIdentityConflict(summary.Conflicts) {
+					continue
+				}
+				// Target is the base; the newer extraction overlays it, so a
+				// conflicting property takes the source value while keys the
+				// source no longer emits are kept (additive, never a drop).
+				mergedProps = mergeProps(prevHead.Properties, src.Properties)
+				mergeResolution = "newest"
+				// summary.Conflicts is every overlapping path with a different
+				// value; no identity path is in it here, so all of them were
+				// overwritten from the source.
+				enrichedKeys = append(enrichedKeys, summary.Conflicts...)
+				summary.EnrichedKeys = enrichedKeys
 			default: // "enrich"
 				// Target wins same keys; source adds new keys only.
 				mergedProps = mergeProps(src.Properties, prevHead.Properties)
@@ -5749,6 +5781,12 @@ func (s *Service) applyMerge(
 			if strategy == "overwrite" {
 				labels = src.Labels
 			}
+			if strategy == "newest" {
+				// Same-entity drift resolution keeps the target's curated
+				// labels and adds the newer extraction's, like the same-entity
+				// fast-forward path does.
+				labels = unionLabels(prevHead.Labels, src.Labels)
+			}
 			if labels == nil {
 				labels = []string{}
 			}
@@ -5759,18 +5797,28 @@ func (s *Service) applyMerge(
 				"resolution": mergeResolution,
 			}
 			if len(enrichedKeys) > 0 {
-				changeSummary["enriched_keys"] = enrichedKeys
+				if strategy == "newest" {
+					changeSummary["overwritten_keys"] = enrichedKeys
+				} else {
+					changeSummary["enriched_keys"] = enrichedKeys
+				}
 			}
 			mergedClass, mergedOwner, ownerErr := resolveMergedOwner(src.DataClass, src.OwnerSourceID, prevHead.DataClass, prevHead.OwnerSourceID)
 			if ownerErr != nil {
 				return 0, fmt.Errorf("conflict-resolve object %s: %w", cid, ownerErr)
+			}
+			namespace := src.Namespace
+			if strategy == "newest" {
+				// Namespace is part of the object's natural identity; a drift
+				// resolution must not move the entity between namespaces.
+				namespace = prevHead.Namespace
 			}
 			newVersion := &GraphObject{
 				Type:          prevHead.Type,
 				Name:          resolvedName,
 				Key:           prevHead.Key,
 				Status:        resolvedStatus,
-				Namespace:     src.Namespace,
+				Namespace:     namespace,
 				Labels:        labels,
 				Properties:    mergedProps,
 				ProjectID:     projectID,
@@ -6138,6 +6186,9 @@ type mergeSettings struct {
 	SimilarityAction string
 	// CanonicalConflictAction is the strategy for canonical-id-matched conflicting objects.
 	// Mirrors the legacy ConflictStrategy: "enrich", "overwrite", "preserve_target", "block".
+	// The additional "newest" action is only produced by the partial_newest preset:
+	// it auto-resolves a same-entity re-extraction's property drift in favour of
+	// the newer (source) values, but keeps identity drift for review.
 	CanonicalConflictAction string
 }
 
@@ -6160,6 +6211,14 @@ var mergePolicyPresets = map[string]mergeSettings{
 	// target but leaves ambiguous items — canonical conflicts and
 	// semantically-similar duplicates — on the source branch for review.
 	"partial": {true, defaultMergeSimilarityThreshold, "suggest", "preserve_target"},
+	// "partial_newest" is "partial" plus opt-in auto-resolution of same-entity
+	// re-extraction drift: when a source object matches a target HEAD by its
+	// natural (type, namespace, key) identity, a conflicting property takes the
+	// newer (source) value instead of being parked for review. Identity drift
+	// (the entity's name property) still conflicts, and ordinary canonical
+	// conflicts are still preserved on the target. This drains the
+	// re-extraction backlog without silently renaming entities (#1222).
+	"partial_newest": {true, defaultMergeSimilarityThreshold, "suggest", "newest"},
 }
 
 // mergeConflictStrategies are the legacy ConflictStrategy values, consulted only
@@ -6355,6 +6414,29 @@ func classifyMergeObject(sourceHead, targetHead *BranchObjectHead) (status strin
 	}
 
 	return "unchanged", nil
+}
+
+// sameEntityIdentityProperty reports whether a conflicting property path is an
+// identity property for a same-entity re-extraction. Extraction keys an entity
+// on its name, and properties["name"] mirrors that natural identity; a change
+// there is a rename rather than a newer fact, so a drift-resolution policy must
+// never apply it silently. (The top-level key/name/type/namespace identity is
+// preserved separately by the write path.) Paths arrive as "/name" from
+// findConflictingPaths.
+func sameEntityIdentityProperty(path string) bool {
+	return strings.EqualFold(strings.TrimPrefix(path, "/"), "name")
+}
+
+// hasSameEntityIdentityConflict reports whether any conflict path is an
+// identity property, in which case the whole object must be left for review
+// rather than partially auto-resolved.
+func hasSameEntityIdentityConflict(conflicts []string) bool {
+	for _, path := range conflicts {
+		if sameEntityIdentityProperty(path) {
+			return true
+		}
+	}
+	return false
 }
 
 // classifySameEntity classifies a source object that matches a target HEAD by

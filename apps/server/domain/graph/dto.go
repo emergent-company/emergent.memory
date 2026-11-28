@@ -977,6 +977,9 @@ type TraverseEdge struct {
 //	"theirs"        – similarity on, target always wins on conflicts
 //	"mine"          – similarity on, source always wins on conflicts
 //	"mine_no_sim"   – source wins, no similarity probe
+//	"partial"       – apply clean changes; leave canonical conflicts and similar pairs for review
+//	"partial_newest" – partial, plus auto-take the newer value for same-entity re-extraction
+//	                  property drift (identity/name drift still goes to review)
 //	"suggest"       – similarity on, flag similar pairs for human review; block on conflicts
 type BranchMergeRequest struct {
 	SourceBranchID uuid.UUID `json:"source_branch_id" validate:"required"`
@@ -1128,7 +1131,7 @@ type BranchMergeObjectSummary struct {
 	// "similar" means no canonical_id match was found but a semantically similar object
 	// exists in the target above the similarity threshold. The policy determines the action.
 	Status       string     `json:"status"`
-	Resolution   string     `json:"resolution,omitempty"` // "enriched", "overwritten", "skipped", "absorbed"
+	Resolution   string     `json:"resolution,omitempty"` // "enriched", "overwritten", "newest", "skipped", "absorbed"
 	SourceHeadID *uuid.UUID `json:"source_head_id,omitempty"`
 	TargetHeadID *uuid.UUID `json:"target_head_id,omitempty"`
 	SourcePaths  []string   `json:"source_paths,omitempty"`
